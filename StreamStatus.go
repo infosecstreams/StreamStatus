@@ -124,32 +124,31 @@ func (s *StreamersRepo) getRepo() error {
 		// `Progress` to something like os.Stdout.
 		Progress: ioutil.Discard,
 	})
-	if err != nil {
-		// Check if the error is that the repo exists and if it is on disk open it.
-		errStr := fmt.Sprint(err)
-		if strings.Contains(errStr, "exists") {
-			repo, err := git.PlainOpen(s.repoPath)
-			if err != nil {
-				return err
-			} else {
-				log.Warn("Doing git pull")
-				w, err := repo.Worktree()
-				if err != nil {
-					return err
-				}
-				w.Pull(&git.PullOptions{
-					Force:         true,
-					ReferenceName: "HEAD",
-					RemoteName:    "origin",
-				})
-				s.repo = repo
-				return nil
-			}
-		} else {
-			// Otherwise return error
-			return err
-		}
+
+	if err == nil {
+		s.repo = repo
+		return nil
 	}
+	// Check if the error is that the repo exists and if it is on disk open it.
+	errStr := fmt.Sprint(err)
+	// Otherwise return error
+	if !strings.Contains(errStr, "exists") {
+		return err
+	}
+	repo, err = git.PlainOpen(s.repoPath)
+	if err != nil {
+		return err
+	}
+	log.Warn("Doing git pull")
+	w, err := repo.Worktree()
+	if err != nil {
+		return err
+	}
+	w.Pull(&git.PullOptions{
+		Force:         true,
+		ReferenceName: "HEAD",
+		RemoteName:    "origin",
+	})
 	s.repo = repo
 	return nil
 }
@@ -157,11 +156,7 @@ func (s *StreamersRepo) getRepo() error {
 // writeFile writes given text and returns an error.
 func (s *StreamersRepo) writefile(text string) error {
 	bytesToWrite := []byte(text)
-	err := ioutil.WriteFile(s.indexFilePath, bytesToWrite, 0644)
-	if err != nil {
-		return err
-	}
-	return nil
+	return ioutil.WriteFile(s.indexFilePath, bytesToWrite, 0644)
 }
 
 // updateStreamStatus toggles the streamers status online/offline based on the boolean online.
