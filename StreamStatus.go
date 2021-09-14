@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+  "errors"
 	"fmt"
 	"io/ioutil"
 	"net/http"
@@ -18,6 +19,8 @@ import (
 	"github.com/nicklaw5/helix"
 )
 
+var VALID_GAMES = []string{ "Science & Technology", "Software and Game Development", "Tryhackme", "Hackthebox" }
+
 // StreamersRepo struct represents fields to hold various data while updating status.
 type StreamersRepo struct {
 	auth          *httpauth.BasicAuth
@@ -28,6 +31,9 @@ type StreamersRepo struct {
 	repoPath      string
 	streamer      string
 	url           string
+  language      string
+  game          string
+  client        *helix.Client
 }
 
 // NoChangeNeededError is a struct for a custom error handler
@@ -162,39 +168,45 @@ func (s *StreamersRepo) writefile(text string) error {
 // updateStreamStatus toggles the streamers status online/offline based on the boolean online.
 // this function returns the strings in text replaced or an error.
 func (s *StreamersRepo) updateStreamStatus() error {
-	streamerLower := strings.ToLower(s.streamer)
-	if s.online {
-		var offlineTextSearch string
-		if strings.Contains(s.indexMdText, s.streamer) {
-			offlineTextSearch = fmt.Sprintf("&nbsp; | `%s`", s.streamer)
-		} else {
-			offlineTextSearch = fmt.Sprintf("&nbsp; | `%s`", streamerLower)
-		}
-		onlineText := fmt.Sprintf("🟢 | `%s`", s.streamer)
-		onlineTextLower := fmt.Sprintf("🟢 | `%s`", streamerLower)
-		if strings.Contains(s.indexMdText, onlineText) || strings.Contains(s.indexMdText, onlineTextLower) {
-			err := &NoChangeNeededError{}
-			err.err = fmt.Sprintf("no change needed for: %s, online: %v", s.streamer, s.online)
-			return err
-		}
-		s.indexMdText = strings.Replace(s.indexMdText, offlineTextSearch, onlineText, 1)
-	} else {
-		var onlineTextSearch string
-		if strings.Contains(s.indexMdText, s.streamer) {
-			onlineTextSearch = fmt.Sprintf("🟢 | `%s`", s.streamer)
-		} else {
-			onlineTextSearch = fmt.Sprintf("🟢 | `%s`", streamerLower)
-		}
-		offlineText := fmt.Sprintf("&nbsp; | `%s`", s.streamer)
-		offlineTextOnline := fmt.Sprintf("&nbsp; | `%s`", streamerLower)
-		if strings.Contains(s.indexMdText, offlineText) || strings.Contains(s.indexMdText, offlineTextOnline) {
-			err := &NoChangeNeededError{}
-			err.err = fmt.Sprintf("no change needed for: %s, online: %v", s.streamer, s.online)
-			return err
-		}
-		s.indexMdText = strings.Replace(s.indexMdText, onlineTextSearch, offlineText, 1)
-	}
+	streamerFormatted := fmt.Sprintf("`%s`", s.streamer)
+
+  indexMdLines := strings.Split(s.indexMdText, "\n")
+  for i, v := range indexMdLines {
+    if strings.Contains(v, streamerFormatted) {
+      otherInfo := strings.Split(v, "|")[3]
+      newLine := s.generateStreamerLine(otherInfo)
+      if newLine != v {
+        indexMdLines[i] = newLine
+      } else {
+        err := &NoChangeNeededError{}
+        err.err = fmt.Sprintf("no change needed for: %s, online: %v", s.streamer, s.online)
+        return err
+      }
+      break
+    }
+  }
+
+  s.indexMdText = strings.Join(indexMdLines, "\n")
+ 
 	return nil
+}
+
+func (s *StreamersRepo) generateStreamerLine(otherInfo string) string {
+  var onlineString string
+  if s.online {
+    onlineString = "🟢"
+  } else {
+    onlineString = "&nbsp;"
+  }
+  return fmt.Sprintf("%s | `%s` | [%s](%s) |%s| %s | %s |",
+    onlineString,
+    s.streamer,
+    s.streamer,
+    s.url,
+    otherInfo,
+    s.language,
+    s.game,
+  )
 }
 
 // readFile reads in a slice of bytes from the provided path and returns a string or an error.
@@ -303,8 +315,12 @@ func (s *StreamersRepo) eventsubStatus(w http.ResponseWriter, r *http.Request) {
 		log.Printf("got offline event for: %s\n", offlineEvent.BroadcasterUserName)
 		w.WriteHeader(200)
 		w.Write([]byte("ok"))
+
+
 		s.streamer = offlineEvent.BroadcasterUserName
 		s.online = false
+    s.language = ""
+    s.game = ""
 		err := updateMarkdown(s)
 		if err == nil {
 			updateRepo(s)
@@ -318,9 +334,20 @@ func (s *StreamersRepo) eventsubStatus(w http.ResponseWriter, r *http.Request) {
 		log.Printf("got online event for: %s\n", onlineEvent.BroadcasterUserName)
 		w.WriteHeader(200)
 		w.Write([]byte("ok"))
+    
+    stream, err := s.fetchStreamInfo(onlineEvent.BroadcasterUserID)
+    if err != nil {
+      log.Warnf("Error fetching stream info for %s", onlineEvent.BroadcasterUserName)
+      return
+    }
+
+    s.game = stream.GameName
 		s.streamer = onlineEvent.BroadcasterUserName
-		s.online = true
-		err := updateMarkdown(s)
+    // Show streamer as offline if they're not doing infosec
+		s.online = contains(VALID_GAMES, s.game)
+    s.language = stream.Language
+
+		err = updateMarkdown(s)
 		if err == nil {
 			updateRepo(s)
 			pushRepo(s)
@@ -330,6 +357,33 @@ func (s *StreamersRepo) eventsubStatus(w http.ResponseWriter, r *http.Request) {
 	} else {
 		log.Errorf("error: event type %s has not been implemented -- pull requests welcome!", r.Header.Get("Twitch-Eventsub-Subscription-Type"))
 	}
+}
+
+func (s *StreamersRepo) fetchStreamInfo(user_login string) (*helix.Stream, error) {
+  streams, err := s.client.GetStreams(&helix.StreamsParams{
+    UserLogins: []string{user_login},
+  })
+  if err != nil {
+    return nil, err
+  }
+  if streams.ErrorStatus != 0 {
+    return nil, errors.New(fmt.Sprintf("Error fetching stream info status=%d %s error=%s", streams.ErrorStatus, streams.Error, streams.ErrorMessage))
+  }
+
+  if len(streams.Data.Streams) > 0 {
+    return &streams.Data.Streams[0], nil
+  }
+
+  return nil, errors.New("No streams returned")
+}
+
+func contains(arr []string, item string) bool {
+  for _, v := range arr {
+    if v == item {
+      return true
+    }
+  }
+  return false
 }
 
 // main do the work.
@@ -352,13 +406,37 @@ func main() {
 		Password: os.Getenv("SS_TOKEN"),
 	}
 
+  if len(os.Getenv("TW_CLIENT_ID")) == 0 || len(os.Getenv("TW_CLIENT_SECRET")) == 0 {
+    log.Fatalln("error: no TW_CLIENT_ID and/or TW_CLIENT_SECRET specified in environment! https://dev.twitch.tv/console/app")
+  }
+
+  client, err := helix.NewClient(&helix.Options{
+    ClientID: os.Getenv("TW_CLIENT_ID"),
+    ClientSecret: os.Getenv("TW_CLIENT_SECRET"),
+  })
+  if err != nil {
+    log.Fatalln(err)
+    return
+  }
+
+  access_token, err := client.RequestAppAccessToken([]string{})
+  if err != nil {
+    log.Fatalln(err)
+    return
+  }
+  client.SetAppAccessToken(access_token.Data.AccessToken)
+
 	// Create StreamersRepo object
 	var repo = StreamersRepo{
 		auth:          auth,
 		indexFilePath: filePath,
 		repoPath:      repoPath,
 		url:           repoUrl,
+    client:         client,
 	}
+
+  // Test auth token works
+  // log.Print(repo.fetchStreamInfo("alh4zr3d"))
 
 	port := ":8080"
 	// Google Cloud Run defaults to 8080. Their platform
