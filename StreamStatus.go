@@ -358,9 +358,9 @@ func (s *StreamersRepo) eventsubStatus(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *StreamersRepo) fetchStreamInfo(user_login string) (*helix.Stream, error) {
+func (s *StreamersRepo) fetchStreamInfo(user_id string) (*helix.Stream, error) {
   streams, err := s.client.GetStreams(&helix.StreamsParams{
-    UserLogins: []string{user_login},
+    UserIDs: []string{user_id},
   })
   if err != nil {
     return nil, err
