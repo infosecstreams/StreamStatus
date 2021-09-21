@@ -19,7 +19,7 @@ import (
 	"github.com/nicklaw5/helix"
 )
 
-var VALID_GAMES = []string{ "Science & Technology", "Software and Game Development", "Tryhackme", "Hackthebox" }
+var VALID_GAMES = []string{ "Science \u0026 Technology", "Software and Game Development", "TryHackMe", "Hack the Box", "Just Chatting" }
 
 // StreamersRepo struct represents fields to hold various data while updating status.
 type StreamersRepo struct {
