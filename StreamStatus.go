@@ -316,7 +316,6 @@ func (s *StreamersRepo) eventsubStatus(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
 		w.Write([]byte("ok"))
 
-
 		s.streamer = offlineEvent.BroadcasterUserName
 		s.online = false
     s.language = ""
