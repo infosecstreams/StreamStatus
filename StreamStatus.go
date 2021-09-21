@@ -196,7 +196,7 @@ func (s *StreamersRepo) generateStreamerLine(otherInfo string) string {
 			"🟢",
 			s.streamer,
 			s.streamer,
-			s.url,
+			s.streamer,
 			otherInfo,
 			s.language,
 			s.game,
