@@ -433,10 +433,6 @@ func main() {
 		url:           repoUrl,
     client:         client,
 	}
-
-  // Test auth token works
-  // log.Print(repo.fetchStreamInfo("alh4zr3d"))
-
 	port := ":8080"
 	// Google Cloud Run defaults to 8080. Their platform
 	// sets the $PORT ENV var if you override it with, e.g.:
