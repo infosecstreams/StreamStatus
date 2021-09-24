@@ -194,7 +194,7 @@ func (s *StreamersRepo) generateStreamerLine(otherInfo string) string {
 	tw := strings.Split(strings.Split(otherInfo, "&nbsp;")[0], ")")[0]
 	yt := strings.Split(otherInfo, "&nbsp;")[1]
 	if s.online {
-		return fmt.Sprintf("%s | `%s` |%s \"%s\") &nbsp;%s | %s",
+		return fmt.Sprintf("%s | `%s` |%s \"%s\") &nbsp;%s| %s",
 			"🟢",
 			s.streamer,
 			tw,
