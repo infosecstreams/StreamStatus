@@ -167,11 +167,11 @@ func (s *StreamersRepo) writefile(text string) error {
 // updateStreamStatus toggles the streamers status online/offline based on the boolean online.
 // this function returns the strings in text replaced or an error.
 func (s *StreamersRepo) updateStreamStatus() error {
-	streamerFormatted := fmt.Sprintf("`%s`", s.streamer)
+	streamerFormatted := fmt.Sprintf("`%s`", strings.ToLower(s.streamer))
 
 	indexMdLines := strings.Split(s.indexMdText, "\n")
 	for i, v := range indexMdLines {
-		if strings.Contains(v, streamerFormatted) {
+		if strings.Contains(strings.ToLower(v), streamerFormatted) {
 			otherInfo := strings.Split(v, "|")[2]
 			newLine := s.generateStreamerLine(otherInfo)
 			if newLine != v {
