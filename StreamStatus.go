@@ -10,12 +10,12 @@ import (
 	"strings"
 	"time"
 
-	log "github.com/sirupsen/logrus"
-
+	"cloud.google.com/go/profiler"
 	git "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	httpauth "github.com/go-git/go-git/v5/plumbing/transport/http"
 	"github.com/nicklaw5/helix"
+	log "github.com/sirupsen/logrus"
 )
 
 var VALID_GAMES = []string{"science \u0026 technology", "software and game development", "tryhackme", "hack the box", "just chatting", "talk shows \u0026 podcasts"}
@@ -389,6 +389,14 @@ func contains(arr []string, item string) bool {
 
 // main do the work.
 func main() {
+	// Setup profiler.
+	cfg := profiler.Config{
+		Service:        "streamstatus",
+		ServiceVersion: "1.0.0",
+	}
+	// Profiler initialization, best done as early as possible.
+	profiler.Start(cfg)
+
 	// Setup file and repo paths.
 	var repoUrl string
 	if len(os.Getenv("SS_GH_REPO")) == 0 {
