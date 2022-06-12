@@ -280,6 +280,14 @@ type eventSubNotification struct {
 
 // eventsubStatus takes and http Request and ResponseWriter to handle the incoming webhook request.
 func (s *StreamersRepo) eventsubStatus(w http.ResponseWriter, r *http.Request) {
+	// Check the requests headers for Twitch-Eventsub-Message-Type and return 200, OK if it's != 0 and return.
+	if r.Header.Get("Twitch-Eventsub-Message-Retry") != "0" {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("OK"))
+		fmt.Println("Ignoring duplicate event from Twitch for Event")
+		return
+	}
+
 	// Read the request body.
 	body, err := ioutil.ReadAll(r.Body)
 	if err != nil {
