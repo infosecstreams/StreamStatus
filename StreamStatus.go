@@ -22,17 +22,19 @@ var VALID_GAMES = []string{"science \u0026 technology", "software and game devel
 
 // StreamersRepo struct represents fields to hold various data while updating status.
 type StreamersRepo struct {
-	auth          *httpauth.BasicAuth
-	indexFilePath string
-	indexMdText   string
-	online        bool
-	repo          *git.Repository
-	repoPath      string
-	streamer      string
-	url           string
-	language      string
-	game          string
-	client        *helix.Client
+	auth             *httpauth.BasicAuth
+	inactiveFilePath string
+	inactiveMdText   string
+	indexFilePath    string
+	indexMdText      string
+	online           bool
+	repo             *git.Repository
+	repoPath         string
+	streamer         string
+	url              string
+	language         string
+	game             string
+	client           *helix.Client
 }
 
 // NoChangeNeededError is a struct for a custom error handler
@@ -159,9 +161,19 @@ func (s *StreamersRepo) getRepo() error {
 }
 
 // writeFile writes given text and returns an error.
-func (s *StreamersRepo) writefile(text string) error {
-	bytesToWrite := []byte(text)
-	return ioutil.WriteFile(s.indexFilePath, bytesToWrite, 0644)
+func (s *StreamersRepo) writefile(activeText, inactiveText string) error {
+	bytesToWrite := []byte(activeText)
+	err := ioutil.WriteFile(s.indexFilePath, bytesToWrite, 0644)
+	if err != nil {
+		return err
+	}
+
+	bytesToWrite = []byte(inactiveText)
+	err = ioutil.WriteFile(s.inactiveFilePath, bytesToWrite, 0644)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 // updateStreamStatus toggles the streamers status online/offline based on the boolean online.
@@ -170,8 +182,12 @@ func (s *StreamersRepo) updateStreamStatus() error {
 	streamerFormatted := fmt.Sprintf("`%s`", strings.ToLower(s.streamer))
 
 	indexMdLines := strings.Split(s.indexMdText, "\n")
+	inactiveMdLines := strings.Split(s.inactiveMdText, "\n")
+	var streamerFound bool
+
 	for i, v := range indexMdLines {
 		if strings.Contains(strings.ToLower(v), streamerFormatted) {
+			streamerFound = true
 			otherInfo := strings.Split(v, "|")[2]
 			newLine := s.generateStreamerLine(otherInfo)
 			if newLine != v {
@@ -185,7 +201,23 @@ func (s *StreamersRepo) updateStreamStatus() error {
 		}
 	}
 
+	if !streamerFound {
+		log.Warnf("streamer not found in index.md, checking inactive.md for %s", s.streamer)
+		for i, v := range inactiveMdLines {
+			if strings.Contains(strings.ToLower(v), streamerFormatted) {
+				// Remove the streamer from the inactive list.
+				inactiveMdLines = append(inactiveMdLines[:i], inactiveMdLines[i+1:]...)
+				// Append to indexMdLines after the last streamer, not last line.
+				otherInfo := strings.Split(v, "|")[1]
+				newLine := s.generateStreamerLine(otherInfo)
+				end := lineIndex(indexMdLines, "Credits") - 1
+				// Insert newLine before 'end' in the indexMdLines.
+				indexMdLines = append(indexMdLines[:end], append([]string{newLine}, indexMdLines[end:]...)...)
+			}
+		}
+	}
 	s.indexMdText = strings.Join(indexMdLines, "\n")
+	s.inactiveMdText = strings.Join(inactiveMdLines, "\n")
 
 	return nil
 }
@@ -194,7 +226,7 @@ func (s *StreamersRepo) generateStreamerLine(otherInfo string) string {
 	tw := fmt.Sprintf("[<i class=\"fab fa-twitch\" style=\"color:#9146FF\"></i>](https://www.twitch.tv/%s", s.streamer)
 	yt := strings.Split(otherInfo, "&nbsp;")[1]
 	if s.online {
-		return fmt.Sprintf("%s | `%s` |%s \"%s\") &nbsp;%s| %s",
+		return fmt.Sprintf("%s | `%s` | %s \"%s\") &nbsp;%s| %s",
 			"🟢",
 			s.streamer,
 			tw,
@@ -203,7 +235,7 @@ func (s *StreamersRepo) generateStreamerLine(otherInfo string) string {
 			s.language,
 		)
 	}
-	return fmt.Sprintf("%s | `%s` |%s) &nbsp;%s",
+	return fmt.Sprintf("%s | `%s` | %s) &nbsp;%s",
 		"&nbsp;",
 		s.streamer,
 		tw,
@@ -213,13 +245,21 @@ func (s *StreamersRepo) generateStreamerLine(otherInfo string) string {
 
 // readFile reads in a slice of bytes from the provided path and returns a string or an error.
 func (s *StreamersRepo) readFile() error {
+	// Read index.md
 	markdownText, err := os.ReadFile(s.indexFilePath)
 	if err != nil {
 		return err
-	} else {
-		s.indexMdText = string(markdownText)
-		return nil
 	}
+	s.indexMdText = string(markdownText)
+
+	// Read inactive.md
+	iMarkdownText, err := os.ReadFile(s.inactiveFilePath)
+	if err != nil {
+		return err
+	}
+	s.inactiveMdText = string(iMarkdownText)
+
+	return nil
 }
 
 // updateMarkdown reads index.md, updates the streamer's status,
@@ -232,8 +272,7 @@ func updateMarkdown(repo *StreamersRepo) error {
 
 	err = repo.readFile()
 	if err != nil {
-		log.Printf("error reading file: %+s\n", err)
-		os.Exit(-1)
+		log.Fatalf("error reading file: %+s\n", err)
 	}
 
 	err = repo.updateStreamStatus()
@@ -243,7 +282,7 @@ func updateMarkdown(repo *StreamersRepo) error {
 		}
 		log.Printf("error updating status: %s\n", err)
 	}
-	err = repo.writefile(repo.indexMdText)
+	err = repo.writefile(repo.indexMdText, repo.inactiveMdText)
 	if err != nil {
 		log.Printf("error writing file: %s\n", err)
 	}
@@ -280,14 +319,6 @@ type eventSubNotification struct {
 
 // eventsubStatus takes and http Request and ResponseWriter to handle the incoming webhook request.
 func (s *StreamersRepo) eventsubStatus(w http.ResponseWriter, r *http.Request) {
-	// Check the requests headers for Twitch-Eventsub-Message-Type and return 200, OK if it's != 0 and return.
-	if r.Header.Get("Twitch-Eventsub-Message-Retry") != "0" {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
-		fmt.Println("Ignoring duplicate event from Twitch for Event")
-		return
-	}
-
 	// Read the request body.
 	body, err := ioutil.ReadAll(r.Body)
 	if err != nil {
@@ -305,7 +336,6 @@ func (s *StreamersRepo) eventsubStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Read the request into eventSubNotification struct.
-
 	var vals eventSubNotification
 	err = json.NewDecoder(bytes.NewReader(body)).Decode(&vals)
 	if err != nil {
@@ -322,9 +352,16 @@ func (s *StreamersRepo) eventsubStatus(w http.ResponseWriter, r *http.Request) {
 	if vals.Subscription.Type == "stream.offline" {
 		var offlineEvent helix.EventSubStreamOfflineEvent
 		_ = json.NewDecoder(bytes.NewReader(vals.Event)).Decode(&offlineEvent)
+		// Check the requests headers for Twitch-Eventsub-Message-Type and return 200, OK if it's != 0 and return.
+		if r.Header.Get("Twitch-Eventsub-Message-Retry") != "0" {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("OK"))
+			log.Warnf("ignoring duplicate event from Twitch for %s", offlineEvent.BroadcasterUserName)
+			return
+		}
 		log.Printf("got offline event for: %s\n", offlineEvent.BroadcasterUserName)
-		w.WriteHeader(200)
-		w.Write([]byte("ok"))
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("OK"))
 
 		s.streamer = offlineEvent.BroadcasterUserName
 		s.online = false
@@ -335,14 +372,21 @@ func (s *StreamersRepo) eventsubStatus(w http.ResponseWriter, r *http.Request) {
 			updateRepo(s)
 			pushRepo(s)
 		} else {
-			log.Warnf("index.md doesn't need to be changed for %s", s.streamer)
+			log.Warnf("Repository doesn't need to be changed for %s", s.streamer)
 		}
 	} else if vals.Subscription.Type == "stream.online" {
 		var onlineEvent helix.EventSubStreamOnlineEvent
 		_ = json.NewDecoder(bytes.NewReader(vals.Event)).Decode(&onlineEvent)
+		// Check the requests headers for Twitch-Eventsub-Message-Type and return 200, OK if it's != 0 and return.
+		if r.Header.Get("Twitch-Eventsub-Message-Retry") != "0" {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("OK"))
+			log.Warnf("ignoring duplicate event from Twitch for %s", onlineEvent.BroadcasterUserName)
+			return
+		}
 		log.Printf("got online event for: %s\n", onlineEvent.BroadcasterUserName)
-		w.WriteHeader(200)
-		w.Write([]byte("ok"))
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("OK"))
 
 		stream, err := s.fetchStreamInfo(onlineEvent.BroadcasterUserID)
 		if err != nil {
@@ -361,7 +405,7 @@ func (s *StreamersRepo) eventsubStatus(w http.ResponseWriter, r *http.Request) {
 			updateRepo(s)
 			pushRepo(s)
 		} else {
-			log.Warnf("index.md doesn't need to be changed for %s", s.streamer)
+			log.Warnf("Repository doesn't need to be changed for %s", s.streamer)
 		}
 	} else {
 		log.Errorf("error: event type %s has not been implemented -- pull requests welcome!", r.Header.Get("Twitch-Eventsub-Subscription-Type"))
@@ -388,11 +432,20 @@ func (s *StreamersRepo) fetchStreamInfo(user_id string) (*helix.Stream, error) {
 
 func contains(arr []string, item string) bool {
 	for _, v := range arr {
-		if v == strings.ToLower(item) {
+		if strings.EqualFold(v, item) {
 			return true
 		}
 	}
 	return false
+}
+
+func lineIndex(arr []string, item string) int {
+	for i, v := range arr {
+		if strings.Contains(strings.ToLower(v), strings.ToLower(item)) {
+			return i
+		}
+	}
+	return 1
 }
 
 // main do the work.
@@ -413,6 +466,7 @@ func main() {
 	}
 	repoPath := strings.Split(repoUrl, "/")[4]
 	filePath := repoPath + "/index.md"
+	iFilePath := repoPath + "/inactive.md"
 
 	// Setup auth.
 	if len(os.Getenv("SS_USERNAME")) == 0 || len(os.Getenv("SS_TOKEN")) == 0 || len(os.Getenv("SS_SECRETKEY")) == 0 {
@@ -445,11 +499,12 @@ func main() {
 
 	// Create StreamersRepo object
 	var repo = StreamersRepo{
-		auth:          auth,
-		indexFilePath: filePath,
-		repoPath:      repoPath,
-		url:           repoUrl,
-		client:        client,
+		auth:             auth,
+		inactiveFilePath: iFilePath,
+		indexFilePath:    filePath,
+		repoPath:         repoPath,
+		url:              repoUrl,
+		client:           client,
 	}
 	port := ":8080"
 	// Google Cloud Run defaults to 8080. Their platform
