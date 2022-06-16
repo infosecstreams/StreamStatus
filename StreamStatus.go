@@ -101,6 +101,10 @@ func (s *StreamersRepo) gitAdd() error {
 	if err != nil {
 		return err
 	}
+	_, err = w.Add(strings.Split(s.inactiveFilePath, "/")[1])
+	if err != nil {
+		log.Warningln("Error adding inactive.md: %s", err)
+	}
 	return nil
 }
 
