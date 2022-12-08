@@ -1,5 +1,5 @@
 # Use an intermediate container for initial building
-FROM golang:1.16-buster AS builder
+FROM golang:1.19-buster AS builder
 RUN apt-get update && apt-get install -y upx ca-certificates --no-install-recommends && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Use go modules and don't let go packages call C code
