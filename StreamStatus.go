@@ -4,10 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"cloud.google.com/go/profiler"
@@ -35,6 +36,7 @@ type StreamersRepo struct {
 	language         string
 	game             string
 	client           *helix.Client
+	mutex            *sync.Mutex
 }
 
 // NoChangeNeededError is a struct for a custom error handler
@@ -50,6 +52,8 @@ func (e *NoChangeNeededError) Error() string {
 
 // gitPush pushes the repository to github and return and error.
 func (s *StreamersRepo) gitPush() error {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
 	err := s.repo.Push(&git.PushOptions{
 		RemoteName: "origin",
 		Auth:       s.auth,
@@ -62,8 +66,11 @@ func (s *StreamersRepo) gitPush() error {
 }
 
 // gitCommit makes a commit to the repository and returns an error.
+// The Below code has a race condition. Suggest a fix:
 func (s *StreamersRepo) gitCommit() error {
+	s.mutex.Lock()
 	w, err := s.repo.Worktree()
+	s.mutex.Unlock()
 	if err != nil {
 		return err
 	}
@@ -73,6 +80,7 @@ func (s *StreamersRepo) gitCommit() error {
 	} else {
 		commitMessage = fmt.Sprintf("☠️  %s has gone offline! [no ci]", s.streamer)
 	}
+	s.mutex.Lock()
 	_, err = w.Commit(commitMessage, &git.CommitOptions{
 		Author: &object.Signature{
 			Name:  "🤖 STATUSS (Seriously Totally Automated Twitch Updating StreamStatus)",
@@ -80,19 +88,24 @@ func (s *StreamersRepo) gitCommit() error {
 			When:  time.Now(),
 		},
 	})
+	s.mutex.Unlock()
 	if err != nil {
 		return err
 	}
+	s.mutex.Lock()
 	commit, err := s.getHeadCommit()
+	s.mutex.Unlock()
 	if err != nil {
 		return err
 	}
-	log.Println(commit)
+	log.Printf("Current HEAD commit: %s\n", commit)
 	return nil
 }
 
 // gitAdd adds the index file to the repository and returns an error.
 func (s *StreamersRepo) gitAdd() error {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
 	w, err := s.repo.Worktree()
 	if err != nil {
 		return err
@@ -126,18 +139,20 @@ func (s *StreamersRepo) getHeadCommit() (string, error) {
 func (s *StreamersRepo) getRepo() error {
 	directory := strings.SplitN(s.url, "/", 5)[4]
 	repo, err := git.PlainClone(directory, false, &git.CloneOptions{
-		// The intended use of a GitHub personal access token is in replace of your password
-		// because access tokens can easily be revoked.
+		// The intended use of a GitHub personal access token is to replace passwords because
+		// access tokens can easily be revoked.
 		// https://help.github.com/articles/creating-a-personal-access-token-for-the-command-line/
 		Auth: s.auth,
 		URL:  s.url,
 		// We're discarding the stdout out here. If you'd like to see it toggle
 		// `Progress` to something like os.Stdout.
-		Progress: ioutil.Discard,
+		Progress: io.Discard,
 	})
 
 	if err == nil {
+		s.mutex.Lock()
 		s.repo = repo
+		s.mutex.Unlock()
 		return nil
 	}
 	// Check if the error is that the repo exists and if it is on disk open it.
@@ -160,20 +175,26 @@ func (s *StreamersRepo) getRepo() error {
 		ReferenceName: "HEAD",
 		RemoteName:    "origin",
 	})
+	s.mutex.Lock()
 	s.repo = repo
+	s.mutex.Unlock()
 	return nil
 }
 
 // writeFile writes given text and returns an error.
 func (s *StreamersRepo) writefile(activeText, inactiveText string) error {
 	bytesToWrite := []byte(activeText)
-	err := ioutil.WriteFile(s.indexFilePath, bytesToWrite, 0644)
+	s.mutex.Lock()
+	err := os.WriteFile(s.indexFilePath, bytesToWrite, 0644)
+	s.mutex.Unlock()
 	if err != nil {
 		return err
 	}
 
 	bytesToWrite = []byte(inactiveText)
-	err = ioutil.WriteFile(s.inactiveFilePath, bytesToWrite, 0644)
+	s.mutex.Lock()
+	err = os.WriteFile(s.inactiveFilePath, bytesToWrite, 0644)
+	s.mutex.Unlock()
 	if err != nil {
 		return err
 	}
@@ -220,8 +241,10 @@ func (s *StreamersRepo) updateStreamStatus() error {
 			}
 		}
 	}
+	s.mutex.Lock()
 	s.indexMdText = strings.Join(indexMdLines, "\n")
 	s.inactiveMdText = strings.Join(inactiveMdLines, "\n")
+	s.mutex.Unlock()
 
 	return nil
 }
@@ -250,14 +273,18 @@ func (s *StreamersRepo) generateStreamerLine(otherInfo string) string {
 // readFile reads in a slice of bytes from the provided path and returns a string or an error.
 func (s *StreamersRepo) readFile() error {
 	// Read index.md
+	s.mutex.Lock()
 	markdownText, err := os.ReadFile(s.indexFilePath)
+	s.mutex.Unlock()
 	if err != nil {
 		return err
 	}
 	s.indexMdText = string(markdownText)
 
 	// Read inactive.md
+	s.mutex.Lock()
 	iMarkdownText, err := os.ReadFile(s.inactiveFilePath)
+	s.mutex.Unlock()
 	if err != nil {
 		return err
 	}
@@ -324,7 +351,7 @@ type eventSubNotification struct {
 // eventsubStatus takes and http Request and ResponseWriter to handle the incoming webhook request.
 func (s *StreamersRepo) eventsubStatus(w http.ResponseWriter, r *http.Request) {
 	// Read the request body.
-	body, err := ioutil.ReadAll(r.Body)
+	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		log.Println(err)
 		return
@@ -452,16 +479,19 @@ func lineIndex(arr []string, item string) int {
 	return 1
 }
 
-// main do the work.
-func main() {
+// init function for the profiler.
+func init() {
 	// Setup profiler.
 	cfg := profiler.Config{
 		Service:        "streamstatus",
-		ServiceVersion: "1.0.0",
+		ServiceVersion: "1.1.0",
 	}
 	// Profiler initialization, best done as early as possible.
 	profiler.Start(cfg)
+}
 
+// main do the work.
+func main() {
 	// Setup file and repo paths.
 	var repoUrl string
 	if len(os.Getenv("SS_GH_REPO")) == 0 {
@@ -509,6 +539,7 @@ func main() {
 		repoPath:         repoPath,
 		url:              repoUrl,
 		client:           client,
+		mutex:            &sync.Mutex{},
 	}
 	port := ":8080"
 	// Google Cloud Run defaults to 8080. Their platform
