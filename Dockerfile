@@ -1,5 +1,5 @@
 # Use an intermediate container for initial building
-FROM golang:1.19-buster AS builder
+FROM golang:latest AS builder
 RUN apt-get update && apt-get install -y upx ca-certificates --no-install-recommends && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Use go modules and don't let go packages call C code
@@ -20,3 +20,9 @@ COPY --chown=0:0 --from=builder /build/StreamStatus /
 WORKDIR /
 EXPOSE 3000
 ENTRYPOINT ["/StreamStatus"]
+LABEL org.opencontainers.image.authors='goproslowyo@gmail.com'
+LABEL org.opencontainers.image.description="Twitch Stream Status"
+LABEL org.opencontainers.image.licenses='Apache-2.0'
+LABEL org.opencontainers.image.source='https://github.com/infosecstreams/StreamStatus'
+LABEL org.opencontainers.image.url='https://infosecstreams.com'
+LABEL org.opencontainers.image.vendor='InfoSec Streams'

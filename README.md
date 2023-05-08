@@ -53,7 +53,7 @@ docker build -t streamstatus:dev .
 Run directly with ENV vars:
 
 ```shell
-SS_PORT=3000 SS_SECRETKEY=secret SS_TOKEN=token SS_USERNAME=username ./StreamStatus
+SS_PORT=3000 SS_SECRETKEY=secret SS_TOKEN=token SS_USERNAME=username TW_CLIENT_ID=client_id TW_CLIENT_SECRET=client_secret ./StreamStatus
 ```
 
 ---
@@ -69,6 +69,10 @@ export SS_SECRETKEY=secret
 export SS_TOKEN=token
 # GitHub username
 export SS_USERNAME=username
+# Twitch Client ID
+export TW_CLIENT_ID=client_id
+# Twitch Secret
+export TW_CLIENT_SECRET=client_secret
 
 # Run:
 ./StreamStatus
@@ -79,5 +83,15 @@ export SS_USERNAME=username
 Or, if you built the docker image:
 
 ```shell
-docker run --rm -it -e SS_PORT=9001 -e SS_SECRETKEY=secret -e SS_TOKEN=token -e SS_USERNAME=username streamstatus:dev
+docker run --rm -it -e SS_PORT=9001 -e SS_SECRETKEY=secret -e SS_TOKEN=token -e SS_USERNAME=username -e TW_CLIENT_ID=client_id -e TW_CLIENT_SECRET=client_secret streamstatus:dev
+```
+
+---
+
+Or, use `docker-compose` after setting environment variables in `streamstatus.env`
+
+```shell
+docker-compose up
+# or to background it:
+docker-compose up -d
 ```

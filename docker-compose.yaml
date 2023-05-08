@@ -1,0 +1,8 @@
+version: 3
+
+services:
+  streamstatus:
+    image: ghcr.io/infosecstreams/streamstatus:latest
+    ports:
+      - "8080:8080"
+    env_file: ./streamstatus.env
