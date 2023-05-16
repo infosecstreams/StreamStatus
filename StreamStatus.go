@@ -11,15 +11,30 @@ import (
 	"sync"
 	"time"
 
-	"cloud.google.com/go/profiler"
 	git "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	httpauth "github.com/go-git/go-git/v5/plumbing/transport/http"
-	"github.com/nicklaw5/helix"
+	"github.com/nicklaw5/helix/v2"
 	log "github.com/sirupsen/logrus"
 )
 
-var VALID_GAMES = []string{"science \u0026 technology", "software and game development", "tryhackme", "hack the box", "just chatting", "talk shows \u0026 podcasts"}
+var VALID_GAMES = []string{
+	"hack the box",
+	"just chatting",
+	"science \u0026 technology",
+	"software and game development",
+	"talk shows \u0026 podcasts",
+	"tryhackme",
+}
+
+var OPTIONAL_TAGS = []string{
+	"ctf", "capturetheflag",
+	"htb", "hackthebox",
+	"thm", "tryhackme",
+	"infosec", "cybersecurity", "informationsecurity",
+	"hacker", "hacking", "bugbounty", "pentest", "security",
+	"iss", "infosecstream", "infosecstreams", "infosecstreamer", "infosecstreamers",
+}
 
 // StreamersRepo struct represents fields to hold various data while updating status.
 type StreamersRepo struct {
@@ -35,6 +50,7 @@ type StreamersRepo struct {
 	url              string
 	language         string
 	game             string
+	tags             []string
 	client           *helix.Client
 	mutex            *sync.Mutex
 }
@@ -426,9 +442,10 @@ func (s *StreamersRepo) eventsubStatus(w http.ResponseWriter, r *http.Request) {
 		}
 
 		s.game = stream.GameName
+		s.tags = stream.Tags
 		s.streamer = onlineEvent.BroadcasterUserName
-		// Show streamer as offline if they're not doing infosec
-		s.online = contains(VALID_GAMES, s.game)
+		// Show streamer as offline if they're not "doing infosec"
+		s.online = contains(VALID_GAMES, s.game) || containsTags(OPTIONAL_TAGS, s.tags)
 		s.language = strings.ToUpper(stream.Language)
 
 		err = updateMarkdown(s)
@@ -444,9 +461,10 @@ func (s *StreamersRepo) eventsubStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *StreamersRepo) fetchStreamInfo(user_id string) (*helix.Stream, error) {
-	streams, err := s.client.GetStreams(&helix.StreamsParams{
-		UserIDs: []string{user_id},
-	})
+	streams, err := s.client.GetStreams(
+		&helix.StreamsParams{
+			UserIDs: []string{user_id},
+		})
 	if err != nil {
 		return nil, err
 	}
@@ -470,6 +488,19 @@ func contains(arr []string, item string) bool {
 	return false
 }
 
+func containsTags(arr []string, tags []string) bool {
+	found := false
+	for _, v := range arr {
+		for _, tag := range tags {
+			if strings.EqualFold(strings.ToLower(v), strings.ToLower(tag)) {
+				found = true
+				log.Printf("stream tag %s found\n", tag)
+			}
+		}
+	}
+	return found
+}
+
 func lineIndex(arr []string, item string) int {
 	for i, v := range arr {
 		if strings.Contains(strings.ToLower(v), strings.ToLower(item)) {
@@ -477,17 +508,6 @@ func lineIndex(arr []string, item string) int {
 		}
 	}
 	return 1
-}
-
-// init function for the profiler.
-func init() {
-	// Setup profiler.
-	cfg := profiler.Config{
-		Service:        "streamstatus",
-		ServiceVersion: "1.1.0",
-	}
-	// Profiler initialization, best done as early as possible.
-	profiler.Start(cfg)
 }
 
 // main do the work.
