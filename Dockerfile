@@ -18,7 +18,6 @@ FROM scratch
 COPY --chown=0:0 --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --chown=0:0 --from=builder /build/StreamStatus /
 WORKDIR /
-EXPOSE 3000
 ENTRYPOINT ["/StreamStatus"]
 LABEL org.opencontainers.image.authors='goproslowyo@gmail.com'
 LABEL org.opencontainers.image.description="Twitch Stream Status"

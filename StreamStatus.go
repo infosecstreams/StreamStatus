@@ -268,12 +268,23 @@ func (s *StreamersRepo) updateStreamStatus() error {
 func (s *StreamersRepo) generateStreamerLine(otherInfo string) string {
 	tw := fmt.Sprintf("[<i class=\"fab fa-twitch\" style=\"color:#9146FF\"></i>](https://www.twitch.tv/%s", s.streamer)
 	yt := strings.Split(otherInfo, "&nbsp;")[1]
-	if s.online {
-		return fmt.Sprintf("%s | `%s` | %s \"%s\") &nbsp;%s| %s",
+	tags := strings.Join(s.tags, ", ")
+	if s.online && s.game != "" {
+		return fmt.Sprintf("%s | `%s` | %s \"%s, Tags: %s\") &nbsp;%s| %s",
 			"🟢",
 			s.streamer,
 			tw,
 			s.game,
+			tags,
+			yt,
+			s.language,
+		)
+	} else if s.online {
+		return fmt.Sprintf("%s | `%s` | %s \"Tags: %s\") &nbsp;%s| %s",
+			"🟢",
+			s.streamer,
+			tw,
+			tags,
 			yt,
 			s.language,
 		)
