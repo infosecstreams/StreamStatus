@@ -5,7 +5,7 @@ go 1.20
 require (
 	github.com/go-git/go-git/v5 v5.6.1
 	github.com/nicklaw5/helix/v2 v2.22.1
-	github.com/sirupsen/logrus v1.9.0
+	github.com/sirupsen/logrus v1.9.2
 )
 
 require (
