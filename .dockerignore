@@ -3,14 +3,16 @@
 # https://docs.docker.com/engine/reference/builder/#dockerignore-file
 
 # Exclude stream repo and repo files
-infosecstreams.github.io/
-example.png
-README.md
-StreamStatus
-
-# Exclude "build-time" ignore files.
 .dockerignore
-.gcloudignore
-
-# Exclude git history and configuration.
+.git
+.github
 .gitignore
+docker-compose.yaml
+example.png
+LICENSE
+Makefile
+README.md
+SECURITY.md
+StreamStatus
+streamstatus.env
+streamstatus.env.example

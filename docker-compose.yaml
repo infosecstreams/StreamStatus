@@ -1,8 +1,14 @@
-version: 3
-
+version: "3"
 services:
+  # streamstatus to receive event requests from twitch
   streamstatus:
     image: ghcr.io/infosecstreams/streamstatus:latest
     ports:
       - "8080:8080"
-    env_file: ./streamstatus.env
+    env_file: streamstatus.env
+    restart: always
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on: []
+      #- nginx

@@ -5,12 +5,18 @@ RUN apt-get update && apt-get install -y upx ca-certificates --no-install-recomm
 # Use go modules and don't let go packages call C code
 ENV GO111MODULE=on CGO_ENABLED=0
 WORKDIR /build
-COPY . .
-RUN GOOS=linux GOARCH=amd64 go build -mod=vendor -ldflags="-s -w" -o StreamStatus ./...
+COPY src/ /build/
+ARG VERSION
+ENV VERSION=${VERSION:-unknown}
+RUN GOOS=linux GOARCH=amd64 \
+    go build \
+    -mod=vendor \
+    -ldflags="-s -w -X main.version=${VERSION}" \
+    -o StreamStatus ./...
 
 # Compress the binary and verify the output using UPX
 # h/t @FiloSottile/Filippo Valsorda: https://blog.filippo.io/shrink-your-go-binaries-with-this-one-weird-trick/
-RUN upx --ultra-brute /build/StreamStatus && upx -t /build/StreamStatus
+RUN upx -v --lzma --best /build/StreamStatus && upx -vt /build/StreamStatus
 RUN mkdir /data
 
 # Copy the contents of /dist to the root of a scratch containter
