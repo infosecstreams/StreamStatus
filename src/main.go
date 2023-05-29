@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"os"
+	"runtime/debug"
 	"strings"
 	"sync"
 
@@ -13,24 +14,20 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-var version string = "unknown"
-
 // main do the work.
 func main() {
+	version, _ := debug.ReadBuildInfo()
+	log.Printf("started streamstatus\n%s\n", version.String())
+
 	// Setup file and repo paths.
 	var repoUrl string
 	if len(os.Getenv("SS_GH_REPO")) == 0 {
-		log.Warn("warning: no SS_GH_REPO specified in environment, defaulting to: https://github.com/infosecstreams/infosecstreams.github.io")
+		log.Info("no SS_GH_REPO specified in environment, defaulting to: https://github.com/infosecstreams/infosecstreams.github.io")
 		repoUrl = "https://github.com/infosecstreams/infosecstreams.github.io"
 	}
 	repoPath := strings.Split(repoUrl, "/")[4]
 	filePath := repoPath + "/index.md"
 	iFilePath := repoPath + "/inactive.md"
-	var awkPath string
-	var found bool
-	if awkPath, found = os.LookupEnv("SS_AWK_PATH"); !found {
-		awkPath = "/gawk"
-	}
 
 	// Setup auth.
 	if len(os.Getenv("SS_USERNAME")) == 0 || len(os.Getenv("SS_TOKEN")) == 0 || len(os.Getenv("SS_SECRETKEY")) == 0 {
@@ -75,7 +72,6 @@ func main() {
 	// Create StreamersRepo object
 	var repo = StreamersRepo{
 		auth:               auth,
-		awkPath:            awkPath,
 		inactiveFilePath:   iFilePath,
 		indexFilePath:      filePath,
 		repoPath:           repoPath,
@@ -95,7 +91,6 @@ func main() {
 	}
 
 	// Listen and serve.
-	log.Printf("streamstatus v%s\n", version)
 	log.Printf("server starting on %s\n", port)
 	http.HandleFunc("/webhook/callbacks", repo.eventsubStatus)
 	log.Fatal(http.ListenAndServe(port, nil))

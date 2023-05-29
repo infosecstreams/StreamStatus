@@ -42,7 +42,6 @@ var OPTIONAL_TAGS = []string{
 // StreamersRepo struct represents fields to hold various data while updating status.
 type StreamersRepo struct {
 	auth               *httpauth.BasicAuth
-	awkPath            string
 	inactiveFilePath   string
 	inactiveMdText     string
 	indexFilePath      string
