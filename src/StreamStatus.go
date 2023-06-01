@@ -275,6 +275,7 @@ func (s *StreamersRepo) updateStreamStatus() error {
 				// Append to indexMdLines after the last streamer, not last line.
 				otherInfo := strings.Split(v, "|")[1]
 				newLine := s.generateStreamerLine(otherInfo)
+				// Find the line before 'Credits' in the indexMdLines.
 				end := lineIndex(indexMdLines, "Credits") - 1
 				// Insert newLine before 'end' in the indexMdLines.
 				indexMdLines = append(indexMdLines[:end], append([]string{newLine}, indexMdLines[end:]...)...)

@@ -33,11 +33,13 @@ func containsTags(arr []string, tags []string) bool {
 	return found
 }
 
-func lineIndex(arr []string, item string) int {
+// lineIndex returns the index of the first line in a slice of strings that contains the given string item.
+func lineIndex(arr []string, item string) (i int) {
+	i = -1
 	for i, v := range arr {
 		if strings.Contains(strings.ToLower(v), strings.ToLower(item)) {
 			return i
 		}
 	}
-	return 1
+	return
 }

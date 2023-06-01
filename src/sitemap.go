@@ -8,6 +8,8 @@ import (
 
 type URLSet struct {
 	XMLName xml.Name `xml:"urlset"`
+	Xmlns   string   `xml:"xmlns,attr"`
+	Xhtml   string   `xml:"xmlns:xhtml,attr"`
 	URLs    []URL    `xml:"url"`
 }
 
@@ -23,25 +25,25 @@ func updateSitemapXML(xmlData []byte) ([]byte, error) {
 	var urlSet URLSet
 	err := xml.Unmarshal([]byte(xmlData), &urlSet)
 	if err != nil {
-		fmt.Println("Error:", err)
 		return nil, err
 	}
 
 	// Update the first instance of the date with RFC3339 format
 	// This should be the /index.html page data.
-	if len(urlSet.URLs) > 0 {
-		newDate := time.Now().UTC().Format("2006-01-02T15:04:05-07:00")
-		urlSet.URLs[0].LastMod = newDate
+	if len(urlSet.URLs) == 0 {
+		return nil, fmt.Errorf("no URLs in URLSet")
 	}
+	newDate := time.Now().UTC().Format("2006-01-02T15:04:05-07:00")
+	urlSet.URLs[0].LastMod = newDate
+
+	// Set the urlset XML attributes
+	urlSet.Xmlns = "http://www.sitemaps.org/schemas/sitemap/0.9"
+	urlSet.Xhtml = "http://www.w3.org/1999/xhtml"
 
 	// Marshal the updated URLSet struct back to XML
-	outputXML, err := xml.MarshalIndent(urlSet, "", "    ")
-	if err != nil {
-		fmt.Println("Error:", err)
-		return nil, err
-	}
+	outputXML, _ := xml.MarshalIndent(urlSet, "", "    ")
 
-	// Prepend the XML header to the XML data
+	// Append the XML header to the output
 	outputXML = append([]byte(xml.Header), outputXML...)
 
 	// Return the XML data or an error
