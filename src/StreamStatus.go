@@ -512,17 +512,22 @@ func (s *StreamersRepo) eventsubStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *StreamersRepo) fetchStreamInfo(user_id string) (*helix.Stream, error) {
-	streams, err := s.client.GetStreams(
-		&helix.StreamsParams{
-			UserIDs: []string{user_id},
-		})
-	if err != nil {
-		return nil, err
+	var streams *helix.StreamsResponse
+	var err error
+	for i := 1; i <= 3; i++ {
+		log.Infof("[%d] trying to get stream info for %s", i, user_id)
+		streams, err = s.client.GetStreams(
+			&helix.StreamsParams{
+				UserIDs: []string{user_id},
+			})
+		if err == nil {
+			break
+		}
+		time.Sleep(time.Duration(i) * time.Millisecond * 1500)
 	}
 	if streams.ErrorStatus != 0 {
 		return nil, fmt.Errorf("error fetching stream info status=%d %s error=%s", streams.ErrorStatus, streams.Error, streams.ErrorMessage)
 	}
-
 	if len(streams.Data.Streams) > 0 {
 		return &streams.Data.Streams[0], nil
 	}
