@@ -29,6 +29,8 @@ var VALID_GAMES = []string{
 	"talk shows \u0026 podcasts",
 }
 
+// Currently not using this due to showing gamers as online who leave infosec tags.
+// Need to scope the tags down, maybe just ISS related.
 var OPTIONAL_TAGS = []string{
 	"ctf", "capturetheflag",
 	"htb", "hackthebox",
@@ -424,6 +426,8 @@ func (s *StreamersRepo) eventsubStatus(w http.ResponseWriter, r *http.Request) {
 	// Verify that the notification came from twitch using the secret.
 	if !helix.VerifyEventSubNotification(os.Getenv("SS_SECRETKEY"), r.Header, string(body)) {
 		log.Println("invalid signature on message")
+		w.WriteHeader(http.StatusTeapot)
+		w.Write([]byte("I am, unfortunately for you, a teapot.\n"))
 		return
 	} else {
 		log.Println("verified signature on message")
@@ -442,20 +446,17 @@ func (s *StreamersRepo) eventsubStatus(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(vals.Challenge))
 		return
 	}
+	w.Write([]byte("OK"))
 
 	if vals.Subscription.Type == "stream.offline" {
 		var offlineEvent helix.EventSubStreamOfflineEvent
 		_ = json.NewDecoder(bytes.NewReader(vals.Event)).Decode(&offlineEvent)
 		// Check the requests headers for Twitch-Eventsub-Message-Type and return 200, OK if it's != 0 and return.
 		if r.Header.Get("Twitch-Eventsub-Message-Retry") != "0" {
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("OK"))
-			log.Warnf("ignoring duplicate event from Twitch for %s", offlineEvent.BroadcasterUserName)
+			log.Warnf("ignoring duplicate event from Twitch for %s [%s]", offlineEvent.BroadcasterUserName, offlineEvent.BroadcasterUserID)
 			return
 		}
-		log.Printf("got offline event for: %s\n", offlineEvent.BroadcasterUserName)
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
+		log.Printf("got offline event for: %s [%s]\n", offlineEvent.BroadcasterUserName, offlineEvent.BroadcasterUserID)
 
 		s.streamer = offlineEvent.BroadcasterUserName
 		s.online = false
@@ -473,30 +474,36 @@ func (s *StreamersRepo) eventsubStatus(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(bytes.NewReader(vals.Event)).Decode(&onlineEvent)
 		// Check the requests headers for Twitch-Eventsub-Message-Type and return 200, OK if it's != 0 and return.
 		if r.Header.Get("Twitch-Eventsub-Message-Retry") != "0" {
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("OK"))
-			log.Warnf("ignoring duplicate event from Twitch for %s", onlineEvent.BroadcasterUserName)
+			log.Warnf("ignoring duplicate event from Twitch for %s [%s]", onlineEvent.BroadcasterUserName, onlineEvent.BroadcasterUserID)
 			return
 		}
-		log.Printf("got online event for: %s\n", onlineEvent.BroadcasterUserName)
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
+		log.Printf("got online event for: %s [%s]\n", onlineEvent.BroadcasterUserName, onlineEvent.BroadcasterUserID)
 
-		stream, err := s.fetchStreamInfo(onlineEvent.BroadcasterUserID)
-		if err != nil {
-			errorString := fmt.Sprintf("Error fetching stream info for %s (uid: %s)", onlineEvent.BroadcasterUserName, onlineEvent.BroadcasterUserID)
-			log.Error(errorString)
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			s.notificationClient.Send(ctx, errorString, err.Error())
-			return
+		var stream *helix.Stream
+		var err error
+		for i := 1; i <= 3; i++ {
+			stream, err = s.fetchStreamInfo(onlineEvent.BroadcasterUserID)
+			if err != nil {
+				errorString := fmt.Sprintf("Error fetching stream info for %s (uid: %s). error: %s", onlineEvent.BroadcasterUserName, onlineEvent.BroadcasterUserID, err)
+				log.Error(errorString)
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				s.notificationClient.Send(ctx, "failed to get stream info", errorString)
+				if i == 3 {
+					log.Error("Failed to fetch stream info after 3 attempts, giving up.")
+					return
+				}
+			} else if err == nil {
+				break
+			}
 		}
 
 		s.game = stream.GameName
 		s.tags = stream.Tags
 		s.streamer = onlineEvent.BroadcasterUserName
 		// Show streamer as offline if they're not "doing infosec"
-		s.online = contains(VALID_GAMES, s.game) || containsTags(OPTIONAL_TAGS, s.tags)
+		// s.online = contains(VALID_GAMES, s.game) || containsTags(OPTIONAL_TAGS, s.tags)
+		s.online = contains(VALID_GAMES, s.game)
 		s.language = strings.ToUpper(stream.Language)
 
 		err = updateMarkdown(s)
@@ -512,25 +519,21 @@ func (s *StreamersRepo) eventsubStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *StreamersRepo) fetchStreamInfo(user_id string) (*helix.Stream, error) {
-	var streams *helix.StreamsResponse
-	var err error
-	for i := 1; i <= 3; i++ {
-		log.Infof("[%d] trying to get stream info for %s", i, user_id)
-		streams, err = s.client.GetStreams(
-			&helix.StreamsParams{
-				UserIDs: []string{user_id},
-			})
-		if err == nil {
-			break
-		}
-		time.Sleep(time.Duration(i) * time.Millisecond * 1500)
+	var stream *helix.Stream
+	log.Infof("trying to get stream info for uid %s", user_id)
+	streams, err := s.client.GetStreams(
+		&helix.StreamsParams{
+			UserIDs: []string{user_id},
+		})
+	if err != nil {
+		return nil, err
 	}
 	if streams.ErrorStatus != 0 {
 		return nil, fmt.Errorf("error fetching stream info status=%d %s error=%s", streams.ErrorStatus, streams.Error, streams.ErrorMessage)
 	}
+	// We really should only get one stream so just return the first one.
 	if len(streams.Data.Streams) > 0 {
-		return &streams.Data.Streams[0], nil
+		stream = &streams.Data.Streams[0]
 	}
-
-	return nil, fmt.Errorf("no stream returned for uid: %s", user_id)
+	return stream, nil
 }
