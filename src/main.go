@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"net/http"
 	"os"
 	"runtime/debug"
@@ -17,7 +18,8 @@ import (
 // main do the work.
 func main() {
 	version, _ := debug.ReadBuildInfo()
-	log.Printf("started streamstatus\n%s\n", version.String())
+	log.Printf("started streamstatus")
+	fmt.Printf("%s\n", version.String())
 
 	// Setup file and repo paths.
 	var repoUrl string
@@ -91,7 +93,7 @@ func main() {
 	}
 
 	// Listen and serve.
-	log.Printf("server starting on %s\n", port)
+	log.Printf("server starting on %s", port)
 	http.HandleFunc("/webhook/callbacks", repo.eventsubStatus)
 	log.Fatal(http.ListenAndServe(port, nil))
 }

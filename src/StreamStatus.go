@@ -120,7 +120,7 @@ func (s *StreamersRepo) gitCommit() error {
 	if err != nil {
 		return err
 	}
-	log.Printf("Current HEAD commit: %s\n", commit)
+	log.Printf("Current HEAD commit: %s", commit)
 	return nil
 }
 
@@ -352,12 +352,12 @@ func (s *StreamersRepo) readFile() error {
 func updateMarkdown(repo *StreamersRepo) error {
 	err := repo.getRepo()
 	if err != nil {
-		log.Printf("error during repo clone: %s\n", err)
+		log.Printf("error during repo clone: %s", err)
 	}
 
 	err = repo.readFile()
 	if err != nil {
-		log.Fatalf("error reading file: %+s\n", err)
+		log.Fatalf("error reading file: %+s", err)
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		repo.notificationClient.Send(ctx, "error reading file", err.Error())
@@ -368,11 +368,11 @@ func updateMarkdown(repo *StreamersRepo) error {
 		if fmt.Sprintf("%T", err) == "*main.NoChangeNeededError" {
 			return err
 		}
-		log.Printf("error updating status: %s\n", err)
+		log.Printf("error updating status: %s", err)
 	}
 	err = repo.writefile(repo.indexMdText, repo.inactiveMdText)
 	if err != nil {
-		log.Printf("error writing file: %s\n", err)
+		log.Printf("error writing file: %s", err)
 	}
 	return nil
 }
@@ -381,12 +381,12 @@ func updateMarkdown(repo *StreamersRepo) error {
 func updateRepo(repo *StreamersRepo) {
 	err := repo.gitAdd()
 	if err != nil {
-		log.Printf("error git adding file: error: %s\n", err)
+		log.Printf("error git adding file: error: %s", err)
 	}
 
 	err = repo.gitCommit()
 	if err != nil {
-		log.Printf("error making commit: %s\n", err)
+		log.Printf("error making commit: %s", err)
 	}
 }
 
@@ -402,7 +402,7 @@ func pushRepo(repo *StreamersRepo) {
 			"error pushing repo to GitHub",
 			fmt.Sprintf("%s", err),
 		)
-		log.Printf("error pushing repo to GitHub: %s\n", err)
+		log.Printf("error pushing repo to GitHub: %s", err)
 	}
 }
 
@@ -453,10 +453,10 @@ func (s *StreamersRepo) eventsubStatus(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(bytes.NewReader(vals.Event)).Decode(&offlineEvent)
 		// Check the requests headers for Twitch-Eventsub-Message-Type and return 200, OK if it's != 0 and return.
 		if r.Header.Get("Twitch-Eventsub-Message-Retry") != "0" {
-			log.Warnf("ignoring duplicate event from Twitch for %s [%s]", offlineEvent.BroadcasterUserName, offlineEvent.BroadcasterUserID)
+			log.Warnf("ignoring duplicate event from Twitch for %s (%s)", offlineEvent.BroadcasterUserName, offlineEvent.BroadcasterUserID)
 			return
 		}
-		log.Printf("got offline event for: %s [%s]\n", offlineEvent.BroadcasterUserName, offlineEvent.BroadcasterUserID)
+		log.Printf("got offline event for: %s (%s)", offlineEvent.BroadcasterUserName, offlineEvent.BroadcasterUserID)
 
 		s.streamer = offlineEvent.BroadcasterUserName
 		s.online = false
@@ -474,14 +474,14 @@ func (s *StreamersRepo) eventsubStatus(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(bytes.NewReader(vals.Event)).Decode(&onlineEvent)
 		// Check the requests headers for Twitch-Eventsub-Message-Type and return 200, OK if it's != 0 and return.
 		if r.Header.Get("Twitch-Eventsub-Message-Retry") != "0" {
-			log.Warnf("ignoring duplicate event from Twitch for %s [%s]", onlineEvent.BroadcasterUserName, onlineEvent.BroadcasterUserID)
+			log.Warnf("ignoring duplicate event from Twitch for %s (%s)", onlineEvent.BroadcasterUserName, onlineEvent.BroadcasterUserID)
 			return
 		}
-		log.Printf("got online event for: %s [%s]\n", onlineEvent.BroadcasterUserName, onlineEvent.BroadcasterUserID)
+		log.Printf("got online event for: %s (%s)", onlineEvent.BroadcasterUserName, onlineEvent.BroadcasterUserID)
 
-		var stream *helix.Stream
-		var err error
+		var stream helix.Stream
 		for i := 1; i <= 3; i++ {
+			err = nil
 			stream, err = s.fetchStreamInfo(onlineEvent.BroadcasterUserID)
 			if err != nil {
 				errorString := fmt.Sprintf("Error fetching stream info for %s (uid: %s). error: %s", onlineEvent.BroadcasterUserName, onlineEvent.BroadcasterUserID, err)
@@ -497,9 +497,12 @@ func (s *StreamersRepo) eventsubStatus(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 		}
-
-		s.game = stream.GameName
-		s.tags = stream.Tags
+		if len(stream.GameName) != 0 {
+			s.game = stream.GameName
+		}
+		if len(stream.Tags) != 0 {
+			s.tags = stream.Tags
+		}
 		s.streamer = onlineEvent.BroadcasterUserName
 		// Show streamer as offline if they're not "doing infosec"
 		// s.online = contains(VALID_GAMES, s.game) || containsTags(OPTIONAL_TAGS, s.tags)
@@ -518,22 +521,22 @@ func (s *StreamersRepo) eventsubStatus(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *StreamersRepo) fetchStreamInfo(user_id string) (*helix.Stream, error) {
-	var stream *helix.Stream
+func (s *StreamersRepo) fetchStreamInfo(user_id string) (helix.Stream, error) {
+	var stream helix.Stream
 	log.Infof("trying to get stream info for uid %s", user_id)
 	streams, err := s.client.GetStreams(
 		&helix.StreamsParams{
 			UserIDs: []string{user_id},
 		})
 	if err != nil {
-		return nil, err
+		return helix.Stream{}, err
 	}
 	if streams.ErrorStatus != 0 {
-		return nil, fmt.Errorf("error fetching stream info status=%d %s error=%s", streams.ErrorStatus, streams.Error, streams.ErrorMessage)
+		return helix.Stream{}, fmt.Errorf("error fetching stream info status=%d %s error=%s", streams.ErrorStatus, streams.Error, streams.ErrorMessage)
 	}
 	// We really should only get one stream so just return the first one.
 	if len(streams.Data.Streams) > 0 {
-		stream = &streams.Data.Streams[0]
+		stream = streams.Data.Streams[0]
 	}
 	return stream, nil
 }

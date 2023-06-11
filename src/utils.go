@@ -26,7 +26,7 @@ func containsTags(arr []string, tags []string) bool {
 		for _, tag := range tags {
 			if strings.EqualFold(strings.ToLower(v), strings.ToLower(tag)) {
 				found = true
-				log.Debugf("stream tag %s found\n", tag)
+				log.Debugf("stream tag %s found", tag)
 			}
 		}
 	}
