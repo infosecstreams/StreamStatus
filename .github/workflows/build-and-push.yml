@@ -2,8 +2,8 @@ name: Build and Push Docker Image
 
 on:
   push:
-    branches:
-      - main
+    tags:
+      - 'v*'  # This will trigger the workflow on tags that start with 'v'
   workflow_dispatch:
 
 jobs:
@@ -17,16 +17,23 @@ jobs:
       - name: Log in to GitHub Docker registry
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
+      - name: Fetch all tags
+        run: git fetch --tags
+
+      - name: Get the latest tag
+        id: get_tag
+        run: echo "LATEST_TAG=$(git describe --tags `git rev-list --tags --max-count=1`)" >> $GITHUB_ENV
+
       - name: Set up tags
         id: vars
         run: |
           REPO_OWNER="${{ github.repository_owner }}"
           REPO_NAME="${{ github.repository }}"
-          REPO_NAME=$(echo "$REPO_NAME" | tr '[:upper:]' '[:lower:]')
+          REPO_NAME_LOWER=$(echo "$REPO_NAME" | tr '[:upper:]' '[:lower:]')
           SHORT_SHA=$(git rev-parse --short HEAD)
-          VERSION="v1.1.6"
-          TAG1="ghcr.io/${REPO_OWNER}/${REPO_NAME}:latest"
-          TAG2="ghcr.io/${REPO_OWNER}/${REPO_NAME}:${VERSION}-0-${SHORT_SHA}"
+          VERSION="${{ env.LATEST_TAG }}"
+          TAG1="ghcr.io/${REPO_OWNER}/${REPO_NAME_LOWER}:latest"
+          TAG2="ghcr.io/infosecstreams/streamstatus:${VERSION}-0-${SHORT_SHA}"
 
           echo "IMAGE_TAG1=$TAG1" >> $GITHUB_ENV
           echo "IMAGE_TAG2=$TAG2" >> $GITHUB_ENV
