@@ -1,0 +1,42 @@
+name: Build and Push Docker Image
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Log in to GitHub Docker registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Set up tags
+        id: vars
+        run: |
+          REPO_OWNER="${{ github.repository_owner }}"
+          REPO_NAME="${{ github.repository }}"
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          VERSION="v1.1.6"
+          TAG1="ghcr.io/${REPO_OWNER}/${REPO_NAME}:latest"
+          TAG2="ghcr.io/infosecstreams/streamstatus:${VERSION}-0-${SHORT_SHA}"
+
+          echo "IMAGE_TAG1=$TAG1" >> $GITHUB_ENV
+          echo "IMAGE_TAG2=$TAG2" >> $GITHUB_ENV
+
+      - name: Build Docker image
+        run: |
+          echo "Building Docker images: $IMAGE_TAG1 and $IMAGE_TAG2"
+          docker build -t "$IMAGE_TAG1" -t "$IMAGE_TAG2" .
+
+      - name: Push Docker image to GitHub Packages
+        run: |
+          echo "Pushing Docker images: $IMAGE_TAG1 and $IMAGE_TAG2"
+          docker push "$IMAGE_TAG1"
+          docker push "$IMAGE_TAG2"
