@@ -1,0 +1,35 @@
+name: Build and Push Docker Image
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Log in to GitHub Docker registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build Docker image
+        run: |
+          REPO_OWNER="${{ github.repository_owner }}"
+          REPO_NAME="${{ github.repository }}"
+          IMAGE_TAG="ghcr.io/${REPO_OWNER}/${REPO_NAME}:latest"
+
+          echo "Building Docker image: $IMAGE_TAG"
+          docker build -t "$IMAGE_TAG" .
+
+      - name: Push Docker image to GitHub Packages
+        run: |
+          REPO_OWNER="${{ github.repository_owner }}"
+          REPO_NAME="${{ github.repository }}"
+          IMAGE_TAG="ghcr.io/${REPO_OWNER}/${REPO_NAME}:latest"
+
+          echo "Pushing Docker image: $IMAGE_TAG"
+          docker push "$IMAGE_TAG"

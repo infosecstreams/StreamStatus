@@ -448,7 +448,9 @@ func (s *StreamersRepo) eventsubStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Write([]byte("OK"))
 
-	if vals.Subscription.Type == "stream.offline" {
+	switch vals.Subscription.Type {
+
+	case "stream.offline":
 		var offlineEvent helix.EventSubStreamOfflineEvent
 		_ = json.NewDecoder(bytes.NewReader(vals.Event)).Decode(&offlineEvent)
 		// Check the requests headers for Twitch-Eventsub-Message-Type and return 200, OK if it's != 0 and return.
@@ -469,7 +471,8 @@ func (s *StreamersRepo) eventsubStatus(w http.ResponseWriter, r *http.Request) {
 		} else {
 			log.Warnf("Repository doesn't need to be changed for %s", s.streamer)
 		}
-	} else if vals.Subscription.Type == "stream.online" {
+
+	case "stream.online":
 		var onlineEvent helix.EventSubStreamOnlineEvent
 		_ = json.NewDecoder(bytes.NewReader(vals.Event)).Decode(&onlineEvent)
 		// Check the requests headers for Twitch-Eventsub-Message-Type and return 200, OK if it's != 0 and return.
@@ -493,7 +496,7 @@ func (s *StreamersRepo) eventsubStatus(w http.ResponseWriter, r *http.Request) {
 					log.Error("Failed to fetch stream info after 3 attempts, giving up.")
 					return
 				}
-			} else if err == nil {
+			} else {
 				break
 			}
 		}
@@ -516,7 +519,28 @@ func (s *StreamersRepo) eventsubStatus(w http.ResponseWriter, r *http.Request) {
 		} else {
 			log.Warnf("Repository doesn't need to be changed for %s", s.streamer)
 		}
-	} else {
+
+	case "channel.update":
+		var updateEvent helix.EventSubChannelUpdateEvent
+		_ = json.NewDecoder(bytes.NewReader(vals.Event)).Decode(&updateEvent)
+		log.Printf("got channel update event for: %s (%s)", updateEvent.BroadcasterUserName, updateEvent.BroadcasterUserID)
+		// Handle the channel.update event here
+		log.Printf("Event received: %+v", updateEvent)
+
+		s.streamer = updateEvent.BroadcasterUserName
+		s.game = updateEvent.CategoryName
+		s.online = contains(VALID_GAMES, s.game)
+		s.language = strings.ToUpper(updateEvent.Language)
+
+		err = updateMarkdown(s)
+		if err == nil {
+			updateRepo(s)
+			pushRepo(s)
+		} else {
+			log.Warnf("Repository doesn't need to be changed for %s", s.streamer)
+		}
+
+	default:
 		log.Errorf("error: event type %s has not been implemented -- pull requests welcome!", r.Header.Get("Twitch-Eventsub-Subscription-Type"))
 	}
 }

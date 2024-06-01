@@ -1,6 +1,7 @@
 # Use an intermediate container for initial building
 FROM golang:latest AS builder
-RUN apt-get update && apt-get install -y upx ca-certificates --no-install-recommends && apt-get clean && rm -rf /var/lib/apt/lists/*
+RUN sed -i -e 's/bookworm-updates/bookworm-updates sid/' /etc/apt/sources.list.d/debian.sources && apt-get update && apt-get install -y upx ca-certificates --no-install-recommends && apt-get clean && rm -rf /var/lib/apt/lists/*
+# RUN apt update && apt install -y upx ca-certificates --no-install-recommends && apt clean && rm -rf /var/lib/apt/lists/*
 
 # Use go modules and don't let go packages call C code
 ENV GO111MODULE=on CGO_ENABLED=0

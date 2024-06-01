@@ -38,9 +38,10 @@ type EventSubCondition struct {
 
 // Transport for the subscription, currently the only supported Method is "webhook". Secret must be between 10 and 100 characters
 type EventSubTransport struct {
-	Method   string `json:"method"`
-	Callback string `json:"callback"`
-	Secret   string `json:"secret"`
+	Method    string `json:"method"`
+	Callback  string `json:"callback"`
+	Secret    string `json:"secret"`
+	SessionID string `json:"session_id"`
 }
 
 // Twitch Response for getting all current subscriptions
@@ -105,6 +106,11 @@ const (
 	EventSubTypeChannelPointsCustomRewardRemove           = "channel.channel_points_custom_reward.remove"
 	EventSubTypeChannelPointsCustomRewardRedemptionAdd    = "channel.channel_points_custom_reward_redemption.add"
 	EventSubTypeChannelPointsCustomRewardRedemptionUpdate = "channel.channel_points_custom_reward_redemption.update"
+	EventSubTypeChannelChatClear                          = "channel.chat.clear"
+	EventSubTypeChannelChatClearUserMessages              = "channel.chat.clear_user_messages"
+	EventSubTypeChannelChatMessage                        = "channel.chat.message"
+	EventSubTypeChannelChatMessageDelete                  = "channel.chat.message_delete"
+	EventSubTypeChannelChatNotification                   = "channel.chat.notification"
 	EventSubTypeChannelPollBegin                          = "channel.poll.begin"
 	EventSubTypeChannelPollProgress                       = "channel.poll.progress"
 	EventSubTypeChannelPollEnd                            = "channel.poll.end"
@@ -253,6 +259,258 @@ type EventSubChannelRaidEvent struct {
 	Viewers                  int    `json:"viewers"`
 }
 
+// Data for a chat clear event
+type EventSubChannelChatClearEvent struct {
+	BroadcasterUserID    string `json:"broadcaster_user_id"`
+	BroadcasterUserLogin string `json:"broadcaster_user_login"`
+	BroadcasterUserName  string `json:"broadcaster_user_name"`
+}
+
+// Data for a chat clear user messages event
+type EventSubChannelChatClearUserMessagesEvent struct {
+	BroadcasterUserID    string `json:"broadcaster_user_id"`
+	BroadcasterUserLogin string `json:"broadcaster_user_login"`
+	BroadcasterUserName  string `json:"broadcaster_user_name"`
+	TargetUserID         string `json:"target_user_id"`
+	TargetUserLogin      string `json:"target_user_login"`
+	TargetUserName       string `json:"target_user_name"`
+}
+
+// Data for a chat message
+type EventSubChannelChatMessageEvent struct {
+	BroadcasterUserID           string                   `json:"broadcaster_user_id"`
+	BroadcasterUserLogin        string                   `json:"broadcaster_user_login"`
+	BroadcasterUserName         string                   `json:"broadcaster_user_name"`
+	ChatterUserID               string                   `json:"chatter_user_id"`
+	ChatterUserLogin            string                   `json:"chatter_user_login"`
+	ChatterUserName             string                   `json:"chatter_user_name"`
+	MessageID                   string                   `json:"message_id"`
+	Message                     EventSubChatMessage      `json:"message"`
+	MessageType                 EventSubChatMessageType  `json:"message_type"`
+	Badges                      []EventSubChatBadge      `json:"badges"`
+	Cheer                       EventSubChatMessageCheer `json:"cheer"`
+	Color                       string                   `json:"color"`
+	Reply                       EventSubChatMessageReply `json:"reply"`
+	ChannelPointsCustomRewardID string                   `json:"channel_points_custom_reward_id"`
+}
+
+type EventSubChatMessage struct {
+	Text      string                        `json:"text"`
+	Fragments []EventSubChatMessageFragment `json:"fragment"`
+}
+
+type EventSubChatMessageReply struct {
+	ParentMessageID   string `json:"parent_message_id"`
+	ParentMessageBody string `json:"parent_message_body"`
+	ParentUserID      string `json:"parent_user_id"`
+	ParentUserName    string `json:"parent_user_name"`
+	ParentUserLogin   string `json:"parent_user_login"`
+	ThreadMessageID   string `json:"thread_message_id"`
+	ThreadUserID      string `json:"thread_user_id"`
+	ThreadUserName    string `json:"thread_user_name"`
+	ThreadUserLogin   string `json:"thread_user_login"`
+}
+
+type EventSubChatMessageCheer struct {
+	Bits int64 `json:"bits"`
+}
+
+type EventSubChatBadge struct {
+	SetID string `json:"set_id"`
+	ID    string `json:"id"`
+	Info  string `json:"info"`
+}
+
+type EventSubChatMessageType string
+
+const (
+	EventSubChatMessageTypeText                     EventSubChatMessageType = "text"
+	EventSubChatMessageTypeChannelPointsHighlighted EventSubChatMessageType = "channel_points_highlighted"
+	EventSubChatMessageTypeChannelPointsSubOnly     EventSubChatMessageType = "channel_points_sub_only"
+	EventSubChatMessageTypeUserIntro                EventSubChatMessageType = "user_intro"
+)
+
+type EventSubChatMessageFragmentType string
+
+const (
+	EventSubChatMessageFragmentTypeText      EventSubChatMessageFragmentType = "text"
+	EventSubChatMessageFragmentTypeCheermote EventSubChatMessageFragmentType = "cheermote"
+	EventSubChatMessageFragmentTypeEmote     EventSubChatMessageFragmentType = "emote"
+	EventSubChatMessageFragmentTypeMention   EventSubChatMessageFragmentType = "mention"
+)
+
+type EventSubChatMessageFragment struct {
+	Type      EventSubChatMessageFragmentType `json:"type"`
+	Text      string                          `json:"text"`
+	Cheermote EventSubChatMessageCheermote    `json:"cheermote"`
+	Emote     EventSubChatMessageEmote        `json:"emote"`
+	Mention   EventSubChatMessageMention      `json:"mention"`
+}
+
+type EventSubChatMessageCheermote struct {
+	Prefix string `json:"prefix"`
+	Bits   int64  `json:"bits"`
+	Tier   int    `json:"tier"`
+}
+
+type EventSubChatMessageEmote struct {
+	ID         string `json:"id"`
+	EmoteSetID string `json:"emote_set_id"`
+	OwnerID    string `json:"owner_id"`
+	Format     string `json:"format"`
+}
+
+type EventSubChatMessageMention struct {
+	UserID    string `json:"user_id"`
+	UserName  string `json:"user_name"`
+	UserLogin string `json:"user_login"`
+}
+
+// Data for a chat message delete event
+type EventSubChannelChatMessageDeleteEvent struct {
+	BroadcasterUserID    string `json:"broadcaster_user_id"`
+	BroadcasterUserLogin string `json:"broadcaster_user_login"`
+	BroadcasterUserName  string `json:"broadcaster_user_name"`
+	TargetUserID         string `json:"target_user_id"`
+	TargetUserLogin      string `json:"target_user_login"`
+	TargetUserName       string `json:"target_user_name"`
+	MessageID            string `json:"message_id"`
+}
+
+// Data for a chat notification event
+type EventSubChannelChatNotificationEvent struct {
+	BroadcasterUserID    string                                          `json:"broadcaster_user_id"`
+	BroadcasterUserLogin string                                          `json:"broadcaster_user_login"`
+	BroadcasterUserName  string                                          `json:"broadcaster_user_name"`
+	ChatterUserID        string                                          `json:"chatter_user_id"`
+	ChatterUserLogin     string                                          `json:"chatter_user_login"`
+	ChatterUserName      string                                          `json:"chatter_user_name"`
+	ChatterIsAnonymous   bool                                            `json:"chatter_is_anonymous"`
+	Color                string                                          `json:"color"`
+	Badges               []EventSubChatBadge                             `json:"badges"`
+	SystemMessage        string                                          `json:"system_message"`
+	MessageID            string                                          `json:"message_id"`
+	Message              EventSubChatNotificationMessage                 `json:"message"`
+	NoticeType           EventSubChannelChatNotificationType             `json:"notice_type"`
+	Sub                  EventSubChannelChatNotificationSub              `json:"sub"`
+	Resub                EventSubChannelChatNotificationResub            `json:"resub"`
+	SubGift              EventSubChannelChatNotificationSubGift          `json:"sub_gift"`
+	CommunitySubGift     EventSubChannelChatNotificationCommunitySubGift `json:"community_sub_gift"`
+	GiftPaidUpgrade      EventSubChannelChatNotificationGiftPaidUpgrade  `json:"gift_paid_upgrade"`
+	PrimePaidUpgrade     EventSubChannelChatNotificationPrimePaidUpgrade `json:"prime_paid_upgrade"`
+	Raid                 EventSubChannelChatNotificationRaid             `json:"raid"`
+	Unraid               EventSubChannelChatNotificationUnraid           `json:"unraid"`
+	PayItForward         EventSubChannelChatNotificationPayItForward     `json:"pay_it_forward"`
+	Announcement         EventSubChannelChatNotificationAnnouncement     `json:"announcement"`
+	CharityDonation      EventSubChannelChatNotificationCharityDonation  `json:"charity_donation"`
+	BitsBadgeTier        EventSubChannelChatNotificationBitsBadgeTier    `json:"bits_badge_tier"`
+}
+
+type EventSubChannelChatNotificationType string
+
+const (
+	EventSubChannelNotificationSub              EventSubChannelChatNotificationType = "sub"
+	EventSubChannelNotificationResub            EventSubChannelChatNotificationType = "resub"
+	EventSubChannelNotificationSubGift          EventSubChannelChatNotificationType = "sub_gift"
+	EventSubChannelNotificationCommunitySubGift EventSubChannelChatNotificationType = "community_sub_gift"
+	EventSubChannelNotificationGiftPaidUpgrade  EventSubChannelChatNotificationType = "gift_paid_upgrade"
+	EventSubChannelNotificationPrimePaidUpgrade EventSubChannelChatNotificationType = "prime_paid_upgrade"
+	EventSubChannelNotificationRaid             EventSubChannelChatNotificationType = "raid"
+	EventSubChannelNotificationUnraid           EventSubChannelChatNotificationType = "unraid"
+	EventSubChannelNotificationPayItForward     EventSubChannelChatNotificationType = "pay_it_forward"
+	EventSubChannelNotificationAnnouncement     EventSubChannelChatNotificationType = "announcement"
+	EventSubChannelNotificationBitsBadgeTier    EventSubChannelChatNotificationType = "bits_badge_tier"
+	EventSubChannelNotificationCharityDonation  EventSubChannelChatNotificationType = "charity_donation"
+)
+
+type EventSubChannelChatNotificationSub struct {
+	SubTier        string `json:"sub_tier"`
+	IsPrime        bool   `json:"is_prime"`
+	DurationMonths int    `json:"duration_months"`
+}
+
+type EventSubChannelChatNotificationResub struct {
+	CumulativeMonths  int    `json:"cumulative_months"`
+	DurationMonths    int    `json:"duration_months"`
+	StreakMonths      int    `json:"streak_months"`
+	SubTier           string `json:"sub_tier"`
+	IsPrime           bool   `json:"is_prime"`
+	IsGift            bool   `json:"is_gift"`
+	GifterIsAnonymous bool   `json:"gifter_is_anonymous"`
+	GifterUserID      string `json:"gifter_user_id"`
+	GifterUserLogin   string `json:"gifter_user_login"`
+	GifterUserName    string `json:"gifter_user_name"`
+}
+
+type EventSubChannelChatNotificationSubGift struct {
+	DurationMonths     int    `json:"duration_months"`
+	CumulativeTotal    int    `json:"cumulative_total"`
+	RecipientUserID    string `json:"recipient_user_id"`
+	RecipientUserLogin string `json:"recipient_user_login"`
+	RecipientUserName  string `json:"recipient_user_name"`
+	SubTier            string `json:"sub_tier"`
+	CommunityGiftID    string `json:"community_gift_id"`
+}
+
+type EventSubChannelChatNotificationCommunitySubGift struct {
+	ID              string `json:"id"`
+	Total           int    `json:"total"`
+	SubTier         string `json:"sub_tier"`
+	CumulativeTotal int    `json:"cumulative_total"`
+}
+
+type EventSubChannelChatNotificationGiftPaidUpgrade struct {
+	GifterIsAnonymous bool   `json:"gifter_is_anonymous"`
+	GifterUserID      string `json:"gifter_user_id"`
+	GifterUserLogin   string `json:"gifter_user_login"`
+	GifterUserName    string `json:"gifter_user_name"`
+}
+
+type EventSubChannelChatNotificationPrimePaidUpgrade struct {
+	SubTier string `json:"sub_tier"`
+}
+
+type EventSubChannelChatNotificationRaid struct {
+	UserID          string `json:"user_id"`
+	UserLogin       string `json:"user_login"`
+	UserName        string `json:"user_name"`
+	ViewerCount     int64  `json:"viewer_count"`
+	ProfileImageURL string `json:"profile_image_url"`
+}
+
+type EventSubChannelChatNotificationUnraid struct{}
+
+type EventSubChannelChatNotificationPayItForward struct {
+	GifterIsAnonymous bool   `json:"gifter_is_anonymous"`
+	GifterUserID      string `json:"gifter_user_id"`
+	GifterUserLogin   string `json:"gifter_user_login"`
+	GifterUserName    string `json:"gifter_user_name"`
+}
+
+type EventSubChannelChatNotificationAnnouncement struct {
+	Color string `json:"color"`
+}
+
+type EventSubChannelChatNotificationCharityDonation struct {
+	CharityName string                                               `json:"charity_name"`
+	Amount      EventSubChannelChatNotificationCharityDonationAmount `json:"amount"`
+}
+
+type EventSubChannelChatNotificationCharityDonationAmount struct {
+	Value        int64  `json:"value"`
+	DecimalPlace int64  `json:"decimal_place"`
+	Currency     string `json:"currency"`
+}
+
+type EventSubChannelChatNotificationBitsBadgeTier struct {
+	Tier int64 `json:"tier"`
+}
+
+type EventSubChatNotificationMessage struct {
+	Text      string                        `json:"text"`
+	Fragments []EventSubChatMessageFragment `json:"fragment"`
+}
+
 // Data for a channel poll begin event
 type EventSubChannelPollBeginEvent struct {
 	ID                   string                      `json:"id"`
@@ -371,7 +629,7 @@ type EventSubChannelPredictionEndEvent struct {
 	Outcomes             []EventSubOutcome `json:"outcomes"`
 	Status               string            `json:"status"`
 	StartedAt            Time              `json:"started_at"`
-	EndedAt              Time              `json:"eneded_at"`
+	EndedAt              Time              `json:"ended_at"`
 }
 
 // Data for an extension bits transaction creation
@@ -418,6 +676,7 @@ type EventSubHypeTrainProgressEvent struct {
 
 // Data for a hype train end notification
 type EventSubHypeTrainEndEvent struct {
+	ID                   string                 `json:"id"`
 	BroadcasterUserID    string                 `json:"broadcaster_user_id"`
 	BroadcasterUserLogin string                 `json:"broadcaster_user_login"`
 	BroadcasterUserName  string                 `json:"broadcaster_user_name"`
@@ -425,7 +684,7 @@ type EventSubHypeTrainEndEvent struct {
 	Total                int                    `json:"total"`
 	TopContributions     []EventSubContribution `json:"top_contributions"`
 	StartedAt            Time                   `json:"started_at"`
-	ExpiresAt            Time                   `json:"expires_at"`
+	EndedAt              Time                   `json:"ended_at"`
 	CooldownEndsAt       Time                   `json:"cooldown_ends_at"`
 }
 
@@ -512,7 +771,7 @@ type EventSubOutcome struct {
 
 type EventSubProduct struct {
 	Name          string `json:"name"`
-	Bits          int    `json:"bots"`
+	Bits          int    `json:"bits"`
 	Sku           string `json:"sku"`
 	InDevelopment bool   `json:"in_development"`
 }
@@ -707,21 +966,19 @@ func (c *Client) RemoveEventSubSubscription(id string) (*RemoveEventSubSubscript
 
 // Creates an EventSub subscription
 func (c *Client) CreateEventSubSubscription(payload *EventSubSubscription) (*EventSubSubscriptionsResponse, error) {
-	if payload.Transport.Method == "webhook" && !strings.HasPrefix(payload.Transport.Callback, "https://") {
-		return nil, fmt.Errorf("error: callback must use https")
+	switch payload.Transport.Method {
+	case "webhook":
+		if err := verifyWebhookSub(payload); err != nil {
+			return nil, err
+		}
+	case "websocket":
+		if err := verifyWebsocketSub(payload); err != nil {
+			return nil, err
+		}
+	default:
+		return nil, fmt.Errorf("error: unsupported transport method: %s", payload.Transport.Method)
 	}
 
-	if payload.Transport.Secret != "" && (len(payload.Transport.Secret) < 10 || len(payload.Transport.Secret) > 100) {
-		return nil, fmt.Errorf("error: secret must be between 10 and 100 characters")
-	}
-
-	callbackUrl, err := url.Parse(payload.Transport.Callback)
-	if err != nil {
-		return nil, err
-	}
-	if callbackUrl.Port() != "" && callbackUrl.Port() != "443" {
-		return nil, fmt.Errorf("error: callback must use port 443")
-	}
 	resp, err := c.postAsJSON("/eventsub/subscriptions", &ManyEventSubSubscriptions{}, payload)
 	if err != nil {
 		return nil, err
@@ -740,4 +997,32 @@ func VerifyEventSubNotification(secret string, header http.Header, message strin
 	mac.Write(hmacMessage)
 	hmacsha256 := fmt.Sprintf("sha256=%s", hex.EncodeToString(mac.Sum(nil)))
 	return hmacsha256 == header.Get("Twitch-Eventsub-Message-Signature")
+}
+
+func verifyWebhookSub(payload *EventSubSubscription) error {
+	if !strings.HasPrefix(payload.Transport.Callback, "https://") {
+		return fmt.Errorf("error: callback must use https")
+	}
+
+	if payload.Transport.Secret != "" && (len(payload.Transport.Secret) < 10 || len(payload.Transport.Secret) > 100) {
+		return fmt.Errorf("error: secret must be between 10 and 100 characters")
+	}
+
+	callbackUrl, err := url.Parse(payload.Transport.Callback)
+	if err != nil {
+		return err
+	}
+	if callbackUrl.Port() != "" && callbackUrl.Port() != "443" {
+		return fmt.Errorf("error: callback must use port 443")
+	}
+
+	return nil
+}
+
+func verifyWebsocketSub(payload *EventSubSubscription) error {
+	if len(payload.Transport.SessionID) == 0 {
+		return fmt.Errorf("error: session ID must be set up")
+	}
+
+	return nil
 }
