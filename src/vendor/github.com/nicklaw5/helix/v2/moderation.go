@@ -380,3 +380,105 @@ func (c *Client) RemoveChannelModerator(params *RemoveChannelModeratorParams) (*
 
 	return moderators, nil
 }
+
+// `UserID` must match the user ID in the User-Access token
+type GetModeratedChannelsParams struct {
+	// Required
+	UserID string `query:"user_id"`
+
+	// Optional
+	After string `query:"after"`
+	First int    `query:"first"`
+}
+
+type ModeratedChannel struct {
+	BroadcasterID    string `json:"broadcaster_id"`
+	BroadcasterLogin string `json:"broadcaster_login"`
+	BroadcasterName  string `json:"broadcaster_name"`
+}
+
+type ManyModeratedChannels struct {
+	ModeratedChannels []ModeratedChannel `json:"data"`
+	Pagination        Pagination         `json:"pagination"`
+}
+
+type GetModeratedChannelsResponse struct {
+	ResponseCommon
+	Data ManyModeratedChannels
+}
+
+// GetModeratedChannels Gets a list of channels that the specified user has moderator privileges in.
+// Required scope: user:read:moderated_channels
+func (c *Client) GetModeratedChannels(params *GetModeratedChannelsParams) (*GetModeratedChannelsResponse, error) {
+	if params.UserID == "" {
+		return nil, errors.New("user id is required")
+	}
+
+	resp, err := c.get("/moderation/channels", &ManyModeratedChannels{}, params)
+	if err != nil {
+		return nil, err
+	}
+
+	moderatedChannels := &GetModeratedChannelsResponse{}
+	resp.HydrateResponseCommon(&moderatedChannels.ResponseCommon)
+	moderatedChannels.Data.ModeratedChannels = resp.Data.(*ManyModeratedChannels).ModeratedChannels
+	moderatedChannels.Data.Pagination = resp.Data.(*ManyModeratedChannels).Pagination
+
+	return moderatedChannels, nil
+}
+
+type SendModeratorWarnChatMessageParams struct {
+	// The ID of the broadcaster whose chat room the message will be sent to
+	BroadcasterID string `query:"broadcaster_id"`
+
+	// The ID of the twitch user who requested the warning.
+	ModeratorID string `query:"moderator_id"`
+
+	// The ID of the user sent the WARN message
+	UserID string `json:"user_id"`
+
+	// The warn message to send.
+	Reason string `json:"reason"`
+}
+
+type ModeratorWarnChatMessage struct {
+	BroadcasterID string `json:"broadcaster_id"`
+	ModeratorID   string `json:"moderator_id"`
+	UserID        string `json:"user_id"`
+	Reason        string `json:"reason"`
+}
+
+type ManyModeratorWarnChatMessages struct {
+	Warnings []ModeratorWarnChatMessage `json:"data"`
+}
+
+type SendModeratorWarnChatResponse struct {
+	ResponseCommon
+
+	Data ManyModeratorWarnChatMessages
+}
+
+// SendModeratorWarnMessage Sends a warning message to a user in the broadcaster’s chat.
+// Required moderator:manage:warnings
+func (c *Client) SendModeratorWarnMessage(params *SendModeratorWarnChatMessageParams) (*SendModeratorWarnChatResponse, error) {
+	if params.BroadcasterID == "" {
+		return nil, errors.New("error: broadcaster id must be specified")
+	}
+	if params.ModeratorID == "" {
+		return nil, errors.New("error: moderator id must be specified")
+	}
+	if params.UserID == "" {
+		return nil, errors.New("error: user id must be specified")
+	}
+
+	resp, err := c.postAsJSON("moderation/warnings", &ManyModeratorWarnChatMessages{}, params)
+	if err != nil {
+		return nil, err
+	}
+
+	messageResponse := &SendModeratorWarnChatResponse{}
+	resp.HydrateResponseCommon(&messageResponse.ResponseCommon)
+	messageResponse.Data.Warnings = resp.Data.(*ManyModeratorWarnChatMessages).Warnings
+
+	return messageResponse, nil
+}

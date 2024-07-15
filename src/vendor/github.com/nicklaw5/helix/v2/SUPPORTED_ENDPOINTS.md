@@ -77,6 +77,7 @@
 - [x] Add Blocked Term
 - [x] Remove Blocked Term
 - [x] Delete Chat Messages
+- [x] Get Moderated Channels
 - [x] Get Moderators
 - [x] Add Channel Moderator
 - [x] Remove Channel Moderator
@@ -123,3 +124,4 @@
 - [x] Delete Videos
 - [x] Send Whisper
 - [x] Get Webhook Subscriptions
+- [x] Warn Chat User
