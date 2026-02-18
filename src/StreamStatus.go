@@ -44,11 +44,14 @@ var OPTIONAL_TAGS = []string{
 // StreamersRepo struct represents fields to hold various data while updating status.
 type StreamersRepo struct {
 	auth               *httpauth.BasicAuth
+	activeCsvPath      string
+	inactiveCsvPath    string
 	inactiveFilePath   string
 	inactiveMdText     string
 	indexFilePath      string
 	indexMdText        string
 	online             bool
+	reactivated        bool
 	repo               *git.Repository
 	repoPath           string
 	streamer           string
@@ -156,6 +159,18 @@ func (s *StreamersRepo) gitAdd() error {
 	if err != nil {
 		log.Errorf("Error adding inactive.md: %s", err)
 	}
+	if s.activeCsvPath != "" {
+		_, err = w.Add(strings.Split(s.activeCsvPath, "/")[1])
+		if err != nil {
+			log.Errorf("Error adding streamers.csv: %s", err)
+		}
+	}
+	if s.inactiveCsvPath != "" {
+		_, err = w.Add(strings.Split(s.inactiveCsvPath, "/")[1])
+		if err != nil {
+			log.Errorf("Error adding inactive_streamers.csv: %s", err)
+		}
+	}
 	_, err = w.Add("sitemap.xml")
 	if err != nil {
 		log.Errorf("Error adding sitemap.xml: %s", err)
@@ -247,6 +262,7 @@ func (s *StreamersRepo) writefile(activeText, inactiveText string) error {
 // this function returns the strings in text replaced or an error.
 func (s *StreamersRepo) updateStreamStatus() error {
 	streamerFormatted := fmt.Sprintf("`%s`", strings.ToLower(s.streamer))
+	s.reactivated = false
 
 	indexMdLines := strings.Split(s.indexMdText, "\n")
 	inactiveMdLines := strings.Split(s.inactiveMdText, "\n")
@@ -281,6 +297,8 @@ func (s *StreamersRepo) updateStreamStatus() error {
 				end := lineIndex(indexMdLines, "Credits") - 1
 				// Insert newLine before 'end' in the indexMdLines.
 				indexMdLines = append(indexMdLines[:end], append([]string{newLine}, indexMdLines[end:]...)...)
+				s.reactivated = true
+				break
 			}
 		}
 	}
@@ -373,6 +391,49 @@ func updateMarkdown(repo *StreamersRepo) error {
 	err = repo.writefile(repo.indexMdText, repo.inactiveMdText)
 	if err != nil {
 		log.Printf("error writing file: %s", err)
+	}
+	if repo.reactivated {
+		err = repo.moveCsvEntry()
+		if err != nil {
+			log.Printf("Warning: Could not move CSV entry: %v", err)
+		}
+	}
+	return nil
+}
+
+func (s *StreamersRepo) moveCsvEntry() error {
+	if s.activeCsvPath == "" || s.inactiveCsvPath == "" {
+		return fmt.Errorf("csv paths not configured")
+	}
+	inactiveLines, err := readCSVLines(s.inactiveCsvPath)
+	if err != nil {
+		return err
+	}
+	activeLines, err := readCSVLines(s.activeCsvPath)
+	if err != nil {
+		return err
+	}
+
+	var movedLine string
+	for i, line := range inactiveLines {
+		if strings.EqualFold(csvName(line), s.streamer) {
+			movedLine = line
+			inactiveLines = append(inactiveLines[:i], inactiveLines[i+1:]...)
+			break
+		}
+	}
+	if movedLine == "" {
+		return fmt.Errorf("streamer not found in inactive_streamers.csv: %s", s.streamer)
+	}
+	activeLines = append(activeLines, movedLine)
+	sortCSVLines(activeLines)
+	sortCSVLines(inactiveLines)
+
+	if err := writeCSVLines(s.inactiveCsvPath, inactiveLines); err != nil {
+		return err
+	}
+	if err := writeCSVLines(s.activeCsvPath, activeLines); err != nil {
+		return err
 	}
 	return nil
 }
