@@ -30,6 +30,8 @@ func main() {
 	repoPath := strings.Split(repoUrl, "/")[4]
 	filePath := repoPath + "/index.md"
 	iFilePath := repoPath + "/inactive.md"
+	activeCsvPath := repoPath + "/streamers.csv"
+	inactiveCsvPath := repoPath + "/inactive_streamers.csv"
 
 	// Setup auth.
 	if len(os.Getenv("SS_USERNAME")) == 0 || len(os.Getenv("SS_TOKEN")) == 0 || len(os.Getenv("SS_SECRETKEY")) == 0 {
@@ -74,6 +76,8 @@ func main() {
 	// Create StreamersRepo object
 	var repo = StreamersRepo{
 		auth:               auth,
+		activeCsvPath:      activeCsvPath,
+		inactiveCsvPath:    inactiveCsvPath,
 		inactiveFilePath:   iFilePath,
 		indexFilePath:      filePath,
 		repoPath:           repoPath,

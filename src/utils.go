@@ -1,6 +1,9 @@
 package main
 
 import (
+	"fmt"
+	"os"
+	"sort"
 	"strings"
 
 	log "github.com/sirupsen/logrus"
@@ -42,4 +45,52 @@ func lineIndex(arr []string, item string) (i int) {
 		}
 	}
 	return
+}
+
+func readCSVLines(path string) ([]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if len(data) == 0 {
+		return []string{}, nil
+	}
+	lines := []string{}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if !strings.Contains(line, ",") {
+			return nil, fmt.Errorf("invalid csv line: %s", line)
+		}
+		lines = append(lines, line)
+	}
+	return lines, nil
+}
+
+func writeCSVLines(path string, lines []string) error {
+	var builder strings.Builder
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if builder.Len() > 0 {
+			builder.WriteByte('\n')
+		}
+		builder.WriteString(line)
+	}
+	return os.WriteFile(path, []byte(builder.String()), 0644)
+}
+
+func sortCSVLines(lines []string) {
+	sort.SliceStable(lines, func(i, j int) bool {
+		return strings.ToLower(csvName(lines[i])) < strings.ToLower(csvName(lines[j]))
+	})
+}
+
+func csvName(line string) string {
+	parts := strings.SplitN(line, ",", 2)
+	return strings.TrimSpace(parts[0])
 }

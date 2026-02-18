@@ -59,12 +59,13 @@ type EventSubSubscriptionsResponse struct {
 	Data ManyEventSubSubscriptions
 }
 
-// Parameter for filtering subscriptions, currently only the status is filterable
+// Parameter for filtering subscriptions. The filters are mutually exclusive; the request fails if you specify more than one filter (except After).
 type EventSubSubscriptionsParams struct {
-	Status string `query:"status"`
-	Type   string `query:"type"`
-	UserID string `query:"user_id"`
-	After  string `query:"after"`
+	Status         string `query:"status"`
+	Type           string `query:"type"`
+	UserID         string `query:"user_id"`
+	SubscriptionID string `query:"subscription_id"`
+	After          string `query:"after"`
 }
 
 // Parameter for removing a subscription.
@@ -296,7 +297,7 @@ type EventSubChannelChatMessageEvent struct {
 
 type EventSubChatMessage struct {
 	Text      string                        `json:"text"`
-	Fragments []EventSubChatMessageFragment `json:"fragment"`
+	Fragments []EventSubChatMessageFragment `json:"fragments"`
 }
 
 type EventSubChatMessageReply struct {
@@ -354,10 +355,10 @@ type EventSubChatMessageCheermote struct {
 }
 
 type EventSubChatMessageEmote struct {
-	ID         string `json:"id"`
-	EmoteSetID string `json:"emote_set_id"`
-	OwnerID    string `json:"owner_id"`
-	Format     string `json:"format"`
+	ID         string   `json:"id"`
+	EmoteSetID string   `json:"emote_set_id"`
+	OwnerID    string   `json:"owner_id"`
+	Format     []string `json:"format"`
 }
 
 type EventSubChatMessageMention struct {
@@ -508,7 +509,7 @@ type EventSubChannelChatNotificationBitsBadgeTier struct {
 
 type EventSubChatNotificationMessage struct {
 	Text      string                        `json:"text"`
-	Fragments []EventSubChatMessageFragment `json:"fragment"`
+	Fragments []EventSubChatMessageFragment `json:"fragments"`
 }
 
 // Data for a channel poll begin event
@@ -657,6 +658,7 @@ type EventSubHypeTrainBeginEvent struct {
 	LastContribution     EventSubContribution   `json:"last_contribution"`
 	StartedAt            Time                   `json:"started_at"`
 	ExpiresAt            Time                   `json:"expires_at"`
+	IsGoldenKappaTrain   bool                   `json:"is_golden_kappa_train"`
 }
 
 // Data for a hype train progress notification
@@ -672,6 +674,7 @@ type EventSubHypeTrainProgressEvent struct {
 	LastContribution     EventSubContribution   `json:"last_contribution"`
 	StartedAt            Time                   `json:"started_at"`
 	ExpiresAt            Time                   `json:"expires_at"`
+	IsGoldenKappaTrain   bool                   `json:"is_golden_kappa_train"`
 }
 
 // Data for a hype train end notification
@@ -686,6 +689,7 @@ type EventSubHypeTrainEndEvent struct {
 	StartedAt            Time                   `json:"started_at"`
 	EndedAt              Time                   `json:"ended_at"`
 	CooldownEndsAt       Time                   `json:"cooldown_ends_at"`
+	IsGoldenKappaTrain   bool                   `json:"is_golden_kappa_train"`
 }
 
 // Data for a stream online notification
@@ -953,7 +957,6 @@ func (c *Client) GetEventSubSubscriptions(params *EventSubSubscriptionsParams) (
 
 // Remove an EventSub Subscription
 func (c *Client) RemoveEventSubSubscription(id string) (*RemoveEventSubSubscriptionParamsResponse, error) {
-
 	resp, err := c.delete("/eventsub/subscriptions", nil, &RemoveEventSubSubscriptionParams{ID: id})
 	if err != nil {
 		return nil, err

@@ -5,6 +5,7 @@
 - [x] Generate Authorization URL ("code" or "token" authorization)
 - [x] Get App Access Tokens (OAuth Client Credentials Flow)
 - [x] Get User Access Tokens (OAuth Authorization Code Flow)
+- [x] Get Device Access Tokens (OAuth Device Code Flow)
 - [x] Refresh User Access Tokens
 - [x] Revoke User Access Tokens
 - [x] Validate Access Token
@@ -20,7 +21,7 @@
 - [x] Create Custom Rewards
 - [x] Delete Custom Reward
 - [x] Get Custom Reward
-- [ ] Get Custom Reward Redemption
+- [x] Get Custom Reward Redemption
 - [x] Update Custom Reward
 - [x] Update Redemption Status
 - [x] Get Channel Information
@@ -77,6 +78,7 @@
 - [x] Add Blocked Term
 - [x] Remove Blocked Term
 - [x] Delete Chat Messages
+- [x] Get Moderated Channels
 - [x] Get Moderators
 - [x] Add Channel Moderator
 - [x] Remove Channel Moderator
@@ -123,3 +125,4 @@
 - [x] Delete Videos
 - [x] Send Whisper
 - [x] Get Webhook Subscriptions
+- [x] Warn Chat User

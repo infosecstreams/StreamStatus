@@ -6,6 +6,10 @@ on:
       - 'v*'  # This will trigger the workflow on tags that start with 'v'
   workflow_dispatch:
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -33,7 +37,7 @@ jobs:
           SHORT_SHA=$(git rev-parse --short HEAD)
           VERSION="${{ env.LATEST_TAG }}"
           TAG1="ghcr.io/${REPO_OWNER}/${REPO_NAME_LOWER}:latest"
-          TAG2="ghcr.io/infosecstreams/streamstatus:${VERSION}-0-${SHORT_SHA}"
+          TAG2="ghcr.io/${REPO_OWNER}/infosecstreams/streamstatus:${VERSION}-0-${SHORT_SHA}"
 
           echo "IMAGE_TAG1=$TAG1" >> $GITHUB_ENV
           echo "IMAGE_TAG2=$TAG2" >> $GITHUB_ENV
