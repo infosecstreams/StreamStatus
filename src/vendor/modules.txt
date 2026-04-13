@@ -138,7 +138,7 @@ github.com/kevinburke/ssh_config
 # github.com/klauspost/cpuid/v2 v2.3.0
 ## explicit; go 1.22
 github.com/klauspost/cpuid/v2
-# github.com/nicklaw5/helix/v2 v2.32.0
+# github.com/nicklaw5/helix/v2 v2.34.0
 ## explicit; go 1.25
 github.com/nicklaw5/helix/v2
 # github.com/nikoksr/notify v1.5.0

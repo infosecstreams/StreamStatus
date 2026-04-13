@@ -4,7 +4,7 @@ go 1.26
 
 require (
 	github.com/go-git/go-git/v5 v5.16.5
-	github.com/nicklaw5/helix/v2 v2.32.0
+	github.com/nicklaw5/helix/v2 v2.34.0
 	github.com/nikoksr/notify v1.5.0
 	github.com/sirupsen/logrus v1.9.4
 )
