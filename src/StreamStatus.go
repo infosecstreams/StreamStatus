@@ -78,8 +78,6 @@ func (e *NoChangeNeededError) Error() string {
 
 // gitPush pushes the repository to github and return and error.
 func (s *StreamersRepo) gitPush() error {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
 	err := s.repo.Push(&git.PushOptions{
 		RemoteName: "origin",
 		Auth:       s.auth,
@@ -92,11 +90,8 @@ func (s *StreamersRepo) gitPush() error {
 }
 
 // gitCommit makes a commit to the repository and returns an error.
-// The Below code has a race condition. Suggest a fix:
 func (s *StreamersRepo) gitCommit() error {
-	s.mutex.Lock()
 	w, err := s.repo.Worktree()
-	s.mutex.Unlock()
 	if err != nil {
 		return err
 	}
@@ -106,7 +101,6 @@ func (s *StreamersRepo) gitCommit() error {
 	} else {
 		commitMessage = fmt.Sprintf("☠️  %s has gone offline! [no ci]", s.streamer)
 	}
-	s.mutex.Lock()
 	_, err = w.Commit(commitMessage, &git.CommitOptions{
 		Author: &object.Signature{
 			Name:  "🤖 STATUSS (Seriously Totally Automated Twitch Updating StreamStatus)",
@@ -114,13 +108,10 @@ func (s *StreamersRepo) gitCommit() error {
 			When:  time.Now(),
 		},
 	})
-	s.mutex.Unlock()
 	if err != nil {
 		return err
 	}
-	s.mutex.Lock()
 	commit, err := s.getHeadCommit()
-	s.mutex.Unlock()
 	if err != nil {
 		return err
 	}
@@ -145,8 +136,6 @@ func (s *StreamersRepo) gitAdd() error {
 		log.Errorf("Error writing sitemap.xml: %s", err)
 	}
 
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
 	w, err := s.repo.Worktree()
 	if err != nil {
 		return err
@@ -208,9 +197,7 @@ func (s *StreamersRepo) getRepo() error {
 	})
 
 	if err == nil {
-		s.mutex.Lock()
 		s.repo = repo
-		s.mutex.Unlock()
 		return nil
 	}
 	// Check if the error is that the repo exists and if it is on disk open it.
@@ -252,26 +239,20 @@ func (s *StreamersRepo) getRepo() error {
 	if err != nil {
 		return err
 	}
-	s.mutex.Lock()
 	s.repo = repo
-	s.mutex.Unlock()
 	return nil
 }
 
 // writeFile writes given text and returns an error.
 func (s *StreamersRepo) writefile(activeText, inactiveText string) error {
 	bytesToWrite := []byte(activeText)
-	s.mutex.Lock()
 	err := os.WriteFile(s.indexFilePath, bytesToWrite, 0644)
-	s.mutex.Unlock()
 	if err != nil {
 		return err
 	}
 
 	bytesToWrite = []byte(inactiveText)
-	s.mutex.Lock()
 	err = os.WriteFile(s.inactiveFilePath, bytesToWrite, 0644)
-	s.mutex.Unlock()
 	if err != nil {
 		return err
 	}
@@ -322,10 +303,8 @@ func (s *StreamersRepo) updateStreamStatus() error {
 			}
 		}
 	}
-	s.mutex.Lock()
 	s.indexMdText = strings.Join(indexMdLines, "\n")
 	s.inactiveMdText = strings.Join(inactiveMdLines, "\n")
-	s.mutex.Unlock()
 
 	return nil
 }
@@ -365,18 +344,14 @@ func (s *StreamersRepo) generateStreamerLine(otherInfo string) string {
 // readFile reads in a slice of bytes from the provided path and returns a string or an error.
 func (s *StreamersRepo) readFile() error {
 	// Read index.md
-	s.mutex.Lock()
 	markdownText, err := os.ReadFile(s.indexFilePath)
-	s.mutex.Unlock()
 	if err != nil {
 		return err
 	}
 	s.indexMdText = string(markdownText)
 
 	// Read inactive.md
-	s.mutex.Lock()
 	iMarkdownText, err := os.ReadFile(s.inactiveFilePath)
-	s.mutex.Unlock()
 	if err != nil {
 		return err
 	}
@@ -565,6 +540,11 @@ func (s *StreamersRepo) eventsubStatus(w http.ResponseWriter, r *http.Request) {
 		}
 		log.Printf("got offline event for: %s (%s)", offlineEvent.BroadcasterUserName, offlineEvent.BroadcasterUserID)
 
+		// Serialize the whole event-handling path: per-event state and the
+		// git worktree are shared across concurrent webhook deliveries.
+		s.mutex.Lock()
+		defer s.mutex.Unlock()
+
 		s.streamer = offlineEvent.BroadcasterUserName
 		s.online = false
 		s.language = ""
@@ -586,6 +566,11 @@ func (s *StreamersRepo) eventsubStatus(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		log.Printf("got online event for: %s (%s)", onlineEvent.BroadcasterUserName, onlineEvent.BroadcasterUserID)
+
+		// Serialize the whole event-handling path: per-event state and the
+		// git worktree are shared across concurrent webhook deliveries.
+		s.mutex.Lock()
+		defer s.mutex.Unlock()
 
 		var stream helix.Stream
 		for i := 1; i <= 3; i++ {
@@ -631,6 +616,11 @@ func (s *StreamersRepo) eventsubStatus(w http.ResponseWriter, r *http.Request) {
 		log.Printf("got channel update event for: %s (%s)", updateEvent.BroadcasterUserName, updateEvent.BroadcasterUserID)
 		// Handle the channel.update event here
 		log.Printf("Event received: %+v", updateEvent)
+
+		// Serialize the whole event-handling path: per-event state and the
+		// git worktree are shared across concurrent webhook deliveries.
+		s.mutex.Lock()
+		defer s.mutex.Unlock()
 
 		s.streamer = updateEvent.BroadcasterUserName
 		s.game = updateEvent.CategoryName

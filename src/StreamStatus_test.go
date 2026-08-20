@@ -1,6 +1,12 @@
 package main
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -264,5 +270,100 @@ func TestPushRepoRetriesAfterUpstreamAdvance(t *testing.T) {
 	files := gitOutput(t, origin, "ls-tree", "--name-only", "main")
 	if !strings.Contains(files, "somefile.txt") {
 		t.Errorf("origin/main lost the upstream PR's file:\n%s", files)
+	}
+}
+
+// signEventSub builds a signed Twitch EventSub webhook request for the handler.
+func signEventSub(t *testing.T, secret, msgID, body string) *http.Request {
+	t.Helper()
+	req := httptest.NewRequest("POST", "/webhook/callbacks", strings.NewReader(body))
+	ts := time.Now().Format(time.RFC3339)
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(msgID + ts + body))
+	req.Header.Set("Twitch-Eventsub-Message-Id", msgID)
+	req.Header.Set("Twitch-Eventsub-Message-Timestamp", ts)
+	req.Header.Set("Twitch-Eventsub-Message-Signature", "sha256="+hex.EncodeToString(mac.Sum(nil)))
+	req.Header.Set("Twitch-Eventsub-Message-Retry", "0")
+	return req
+}
+
+// TestEventsubStatusSerializesConcurrentEvents delivers two concurrent
+// webhook events. The handler writes per-event state (streamer, online,
+// game, ...) onto the shared StreamersRepo, so unsynchronized concurrent
+// deliveries corrupt each other; run with -race to detect it.
+func TestEventsubStatusSerializesConcurrentEvents(t *testing.T) {
+	const secret = "testsecret123"
+	t.Setenv("SS_SECRETKEY", secret)
+
+	base := t.TempDir()
+	seed := filepath.Join(base, "seed")
+	origin := filepath.Join(base, "u0", "u1", "u2", "u3", "origin")
+	if err := os.MkdirAll(filepath.Dir(origin), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	alphaOnline := "🟢 | `alpha` | [<i class=\"fab fa-twitch\" style=\"color:#9146FF\"></i>](https://www.twitch.tv/alpha \"Tags: infosec\") &nbsp;| EN"
+	betaOffline := "&nbsp; | `beta` | [<i class=\"fab fa-twitch\" style=\"color:#9146FF\"></i>](https://www.twitch.tv/beta) &nbsp;"
+	indexMd := "# Streamers\n\n" + alphaOnline + "\n" + betaOffline + "\n\n## Credits\n"
+
+	if err := os.MkdirAll(seed, 0755); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, seed, "init", "-b", "main")
+	runGit(t, seed, "config", "user.email", "test@test")
+	runGit(t, seed, "config", "user.name", "test")
+	if err := os.WriteFile(filepath.Join(seed, "index.md"), []byte(indexMd), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(seed, "inactive.md"), []byte("# Inactive\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(seed, "sitemap.xml"), []byte("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\"><url><loc>https://example.com/</loc><lastmod>2024-01-01T00:00:00+00:00</lastmod></url></urlset>\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, seed, "add", ".")
+	runGit(t, seed, "commit", "-m", "c1")
+	runGit(t, base, "clone", "--bare", seed, origin)
+
+	url := "u0/u1/u2/u3/origin"
+	dir := strings.SplitN(url, "/", 5)[4]
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(base); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chdir(oldWd) })
+
+	s := &StreamersRepo{
+		url:                url,
+		repoPath:           dir,
+		indexFilePath:      dir + "/index.md",
+		inactiveFilePath:   dir + "/inactive.md",
+		mutex:              &sync.Mutex{},
+		notificationClient: notify.New(),
+	}
+
+	offlineBody := func(streamer string) string {
+		return `{"subscription":{"type":"stream.offline"},"event":{"broadcaster_user_name":"` + streamer + `","broadcaster_user_id":"1"}}`
+	}
+
+	var wg sync.WaitGroup
+	for i, streamer := range []string{"alpha", "beta"} {
+		wg.Add(1)
+		go func(i int, streamer string) {
+			defer wg.Done()
+			body := offlineBody(streamer)
+			req := signEventSub(t, secret, fmt.Sprintf("msg-%d", i), body)
+			s.eventsubStatus(httptest.NewRecorder(), req)
+		}(i, streamer)
+	}
+	wg.Wait()
+
+	// alpha's offline event must have landed on origin/main.
+	gotIndex := gitOutput(t, origin, "show", "main:index.md")
+	if !strings.Contains(gotIndex, "&nbsp; | `alpha`") {
+		t.Errorf("origin/main index.md does not show alpha offline after concurrent events:\n%s", gotIndex)
 	}
 }
