@@ -1,8 +1,125 @@
 package main
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
+	"time"
+
+	git "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/nikoksr/notify"
 )
+
+// gitOutput runs a git command in dir and returns its output, failing the test on error.
+func gitOutput(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v failed: %v\n%s", args, err, out)
+	}
+	return string(out)
+}
+
+// runGit runs a git command in dir, failing the test on error.
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v failed: %v\n%s", args, err, out)
+	}
+}
+
+// TestGetRepoRecoversFromDivergedClone reproduces the production wedge:
+// a local commit whose push failed (e.g. a site PR merged in between)
+// leaves the clone diverged from origin/main, and go-git's fast-forward-only
+// Pull can never recover it. getRepo must resync the clone with origin/main.
+func TestGetRepoRecoversFromDivergedClone(t *testing.T) {
+	base := t.TempDir()
+	seed := filepath.Join(base, "seed")
+	origin := filepath.Join(base, "origin")
+
+	if err := os.MkdirAll(seed, 0755); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, seed, "init", "-b", "main")
+	runGit(t, seed, "config", "user.email", "test@test")
+	runGit(t, seed, "config", "user.name", "test")
+	if err := os.WriteFile(filepath.Join(seed, "index.md"), []byte("v1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, seed, "add", ".")
+	runGit(t, seed, "commit", "-m", "c1")
+	runGit(t, base, "clone", "--bare", seed, origin)
+
+	// getRepo derives its clone directory from the URL (everything after the
+	// 4th slash) relative to the working directory, so run from a sandbox.
+	work := filepath.Join(base, "work")
+	if err := os.MkdirAll(work, 0755); err != nil {
+		t.Fatal(err)
+	}
+	url := "file://" + origin
+	dir := strings.SplitN(url, "/", 5)[4]
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(work); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chdir(oldWd) })
+
+	s := &StreamersRepo{
+		url:      url,
+		repoPath: dir,
+		mutex:    &sync.Mutex{},
+	}
+	if err := s.getRepo(); err != nil {
+		t.Fatalf("initial getRepo (clone) failed: %v", err)
+	}
+
+	// Simulate a commit whose push failed: the clone diverges from origin.
+	w, err := s.repo.Worktree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "index.md"), []byte("local diverged\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Add("index.md"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Commit("stuck local commit", &git.CommitOptions{
+		Author: &object.Signature{Name: "test", Email: "test@test", When: time.Now()},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Upstream advances (simulates a merged PR on the site repo).
+	if err := os.WriteFile(filepath.Join(seed, "index.md"), []byte("v2\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, seed, "commit", "-am", "c2")
+	runGit(t, seed, "push", origin, "main")
+
+	// Re-running getRepo must resync the clone with origin/main.
+	if err := s.getRepo(); err != nil {
+		t.Fatalf("getRepo on existing clone failed: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "index.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "v2\n" {
+		t.Errorf("local clone not synced with origin/main after getRepo:\ngot index.md = %q, want %q", got, "v2\n")
+	}
+}
 
 func TestGenerateStreamerLine(t *testing.T) {
 	s := StreamersRepo{
@@ -56,5 +173,96 @@ func TestGenerateStreamerLine(t *testing.T) {
 				t.Errorf("\nGot:    %v\nWanted: %v\n\n", gotResult, tt.wantResult)
 			}
 		})
+	}
+}
+
+// TestPushRepoRetriesAfterUpstreamAdvance reproduces the race that starts the
+// wedge: an upstream commit (merged PR) lands between this event's sync and
+// its push, so the push fails non-fast-forward. pushRepo must resync and
+// replay the update so the event is not lost.
+func TestPushRepoRetriesAfterUpstreamAdvance(t *testing.T) {
+	base := t.TempDir()
+	seed := filepath.Join(base, "seed")
+
+	// getRepo derives its clone directory from everything after the URL's 4th
+	// slash, and gitAdd assumes that path is exactly "<dir>/<file>". Give the
+	// origin a path with exactly four leading segments relative to base so the
+	// derived clone directory is a single path segment.
+	origin := filepath.Join(base, "u0", "u1", "u2", "u3", "origin")
+	if err := os.MkdirAll(filepath.Dir(origin), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	offlineLine := "&nbsp; | `teststreamer` | [<i class=\"fab fa-twitch\" style=\"color:#9146FF\"></i>](https://www.twitch.tv/teststreamer) &nbsp;"
+	indexMd := "# Streamers\n\n" + offlineLine + "\n\n## Credits\n"
+
+	if err := os.MkdirAll(seed, 0755); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, seed, "init", "-b", "main")
+	runGit(t, seed, "config", "user.email", "test@test")
+	runGit(t, seed, "config", "user.name", "test")
+	if err := os.WriteFile(filepath.Join(seed, "index.md"), []byte(indexMd), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(seed, "inactive.md"), []byte("# Inactive\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(seed, "sitemap.xml"), []byte("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\"><url><loc>https://example.com/</loc><lastmod>2024-01-01T00:00:00+00:00</lastmod></url></urlset>\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, seed, "add", ".")
+	runGit(t, seed, "commit", "-m", "c1")
+	runGit(t, base, "clone", "--bare", seed, origin)
+
+	url := "u0/u1/u2/u3/origin"
+	dir := strings.SplitN(url, "/", 5)[4] // "origin"
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(base); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chdir(oldWd) })
+
+	s := &StreamersRepo{
+		url:                url,
+		repoPath:           dir,
+		indexFilePath:      dir + "/index.md",
+		inactiveFilePath:   dir + "/inactive.md",
+		streamer:           "teststreamer",
+		online:             true,
+		language:           "EN",
+		game:               "Just Chatting",
+		mutex:              &sync.Mutex{},
+		notificationClient: notify.New(),
+	}
+
+	// Normal event flow: sync, update markdown, commit.
+	if err := updateMarkdown(s); err != nil {
+		t.Fatalf("updateMarkdown failed: %v", err)
+	}
+	updateRepo(s)
+
+	// A PR merges upstream before our push: push will fail non-fast-forward.
+	if err := os.WriteFile(filepath.Join(seed, "somefile.txt"), []byte("merged pr\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, seed, "add", ".")
+	runGit(t, seed, "commit", "-m", "merged PR")
+	runGit(t, seed, "push", origin, "main")
+
+	pushRepo(s)
+
+	// The event must not be lost: origin/main's index.md must show the
+	// streamer online, and must contain the merged PR's file too.
+	gotIndex := gitOutput(t, origin, "show", "main:index.md")
+	if !strings.Contains(gotIndex, "🟢 | `teststreamer`") {
+		t.Errorf("origin/main index.md does not show streamer online after pushRepo:\n%s", gotIndex)
+	}
+	files := gitOutput(t, origin, "ls-tree", "--name-only", "main")
+	if !strings.Contains(files, "somefile.txt") {
+		t.Errorf("origin/main lost the upstream PR's file:\n%s", files)
 	}
 }

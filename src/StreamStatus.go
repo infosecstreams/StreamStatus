@@ -14,6 +14,7 @@ import (
 	"time"
 
 	git "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	httpauth "github.com/go-git/go-git/v5/plumbing/transport/http"
 	"github.com/nicklaw5/helix/v2"
@@ -222,16 +223,35 @@ func (s *StreamersRepo) getRepo() error {
 	if err != nil {
 		return err
 	}
-	log.Warn("Doing git pull")
+	log.Warn("Syncing existing clone with origin/main")
+	// A plain pull is fast-forward-only in go-git, so it can never recover a
+	// clone that diverged from origin (e.g. a local commit whose push failed
+	// because a PR merged upstream first). Fetch and hard-reset instead: any
+	// discarded local commit failed to push anyway, and the status is
+	// regenerated from scratch on every event.
+	err = repo.Fetch(&git.FetchOptions{
+		RemoteName: "origin",
+		Auth:       s.auth,
+		Force:      true,
+	})
+	if err != nil && err != git.NoErrAlreadyUpToDate {
+		return err
+	}
+	remoteRef, err := repo.Reference(plumbing.NewRemoteReferenceName("origin", "main"), true)
+	if err != nil {
+		return err
+	}
 	w, err := repo.Worktree()
 	if err != nil {
 		return err
 	}
-	w.Pull(&git.PullOptions{
-		Force:         true,
-		ReferenceName: "HEAD",
-		RemoteName:    "origin",
+	err = w.Reset(&git.ResetOptions{
+		Commit: remoteRef.Hash(),
+		Mode:   git.HardReset,
 	})
+	if err != nil {
+		return err
+	}
 	s.mutex.Lock()
 	s.repo = repo
 	s.mutex.Unlock()
@@ -375,10 +395,11 @@ func updateMarkdown(repo *StreamersRepo) error {
 
 	err = repo.readFile()
 	if err != nil {
-		log.Fatalf("error reading file: %+s", err)
+		log.Errorf("error reading file: %+s", err)
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		repo.notificationClient.Send(ctx, "error reading file", err.Error())
+		return err
 	}
 
 	err = repo.updateStreamStatus()
@@ -451,20 +472,43 @@ func updateRepo(repo *StreamersRepo) {
 	}
 }
 
-// pushRepo pushes the committed changes to GitHub.
+// pushRepo pushes the committed changes to GitHub. If the push fails (e.g.
+// non-fast-forward because a PR merged upstream between our sync and push),
+// it resyncs the clone with origin and replays the update once so the event
+// isn't lost.
 func pushRepo(repo *StreamersRepo) {
+	err := repo.gitPush()
+	if err == nil {
+		return
+	}
+	log.Printf("error pushing repo to GitHub: %s -- resyncing with origin and retrying once", err)
+
+	retryErr := updateMarkdown(repo)
+	if retryErr != nil {
+		if _, ok := retryErr.(*NoChangeNeededError); ok {
+			// After resyncing, origin already reflects the desired state.
+			log.Printf("no push needed after resync for %s", repo.streamer)
+			return
+		}
+		notifyPushError(repo, retryErr)
+		return
+	}
+	updateRepo(repo)
+	if err := repo.gitPush(); err != nil {
+		notifyPushError(repo, err)
+	}
+}
+
+// notifyPushError reports a push failure via the notification client and log.
+func notifyPushError(repo *StreamersRepo, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-
-	err := repo.gitPush()
-	if err != nil {
-		repo.notificationClient.Send(
-			ctx,
-			"error pushing repo to GitHub",
-			fmt.Sprintf("%s", err),
-		)
-		log.Printf("error pushing repo to GitHub: %s", err)
-	}
+	repo.notificationClient.Send(
+		ctx,
+		"error pushing repo to GitHub",
+		fmt.Sprintf("%s", err),
+	)
+	log.Printf("error pushing repo to GitHub: %s", err)
 }
 
 // eventSubNotification is a struct to hold the eventSub webhook request from Twitch.
