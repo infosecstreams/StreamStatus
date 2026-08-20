@@ -16,15 +16,14 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@v7
+        with:
+          # Full history so git describe / rev-list can see all tags.
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Log in to GitHub Docker registry
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-
-      - name: Fetch all tags
-        # --force: annotated tags otherwise fail with "would clobber existing tag"
-        # against the ref actions/checkout already created locally.
-        run: git fetch --tags --force
 
       - name: Get the latest tag
         id: get_tag
@@ -33,13 +32,13 @@ jobs:
       - name: Set up tags
         id: vars
         run: |
-          REPO_OWNER="${{ github.repository_owner }}"
-          REPO_NAME="${{ github.repository }}"
-          REPO_NAME_LOWER=$(echo "$REPO_NAME" | tr '[:upper:]' '[:lower:]')
+          # github.repository is already "owner/name"; do not prepend the
+          # owner again or the image lands in a wrongly nested package.
+          REPO_NAME_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
           SHORT_SHA=$(git rev-parse --short HEAD)
           VERSION="${{ env.LATEST_TAG }}"
-          TAG1="ghcr.io/${REPO_OWNER}/${REPO_NAME_LOWER}:latest"
-          TAG2="ghcr.io/${REPO_OWNER}/infosecstreams/streamstatus:${VERSION}-0-${SHORT_SHA}"
+          TAG1="ghcr.io/${REPO_NAME_LOWER}:latest"
+          TAG2="ghcr.io/${REPO_NAME_LOWER}:${VERSION}-0-${SHORT_SHA}"
 
           echo "IMAGE_TAG1=$TAG1" >> $GITHUB_ENV
           echo "IMAGE_TAG2=$TAG2" >> $GITHUB_ENV
