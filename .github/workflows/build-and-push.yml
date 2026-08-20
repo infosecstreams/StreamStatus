@@ -22,7 +22,9 @@ jobs:
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
       - name: Fetch all tags
-        run: git fetch --tags
+        # --force: annotated tags otherwise fail with "would clobber existing tag"
+        # against the ref actions/checkout already created locally.
+        run: git fetch --tags --force
 
       - name: Get the latest tag
         id: get_tag
