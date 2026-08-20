@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"reflect"
 	"strconv"
 	"strings"
@@ -28,6 +29,12 @@ type HTTPClient interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
+// Logger is the interface used by the helix client for debug logging.
+// The stdlib *log.Logger satisfies this interface.
+type Logger interface {
+	Printf(format string, v ...interface{})
+}
+
 type Client struct {
 	mu           sync.RWMutex
 	ctx          context.Context
@@ -35,6 +42,7 @@ type Client struct {
 	lastResponse *Response
 	callbacks    struct {
 		onUserAccessTokenRefreshed func(newAccessToken, newRefreshToken string)
+		onAppAccessTokenRefreshed  func(newAccessToken string)
 	}
 }
 
@@ -42,6 +50,7 @@ type Options struct {
 	ClientID          string
 	ClientSecret      string
 	AppAccessToken    string
+	AppAccessScopes   []string
 	DeviceAccessToken string
 	UserAccessToken   string
 	RefreshToken      string
@@ -51,6 +60,14 @@ type Options struct {
 	RateLimitFunc     RateLimitFunc
 	APIBaseURL        string
 	ExtensionOpts     ExtensionOptions
+	// DebugMode enables debug logging of outgoing requests and incoming responses.
+	// WARNING: debug logs may contain sensitive data such as tokens and API responses.
+	// Only enable in non-production environments.
+	DebugMode bool
+	// Logger is the logger used when DebugMode is true. If nil, a default logger
+	// writing to os.Stderr is used. Any type implementing Printf(string, ...interface{})
+	// is accepted (e.g. *log.Logger).
+	Logger Logger
 }
 
 type ExtensionOptions struct {
@@ -66,6 +83,25 @@ type DateRange struct {
 }
 
 type RateLimitFunc func(*Response) error
+
+// DefaultRateLimitFunc is a default rate limit function that sleeps until the
+// rate limit reset time if the rate limit has been reached (i.e. no remaining
+// requests). It can be used as the RateLimitFunc in Options.
+func DefaultRateLimitFunc(lastResponse *Response) error {
+	if lastResponse.GetRateLimitRemaining() > 0 {
+		return nil
+	}
+
+	reset64 := int64(lastResponse.GetRateLimitReset())
+	currentTime := time.Now().Unix()
+
+	if currentTime < reset64 {
+		timeDiff := time.Duration(reset64-currentTime) * time.Second
+		time.Sleep(timeDiff)
+	}
+
+	return nil
+}
 
 type ResponseCommon struct {
 	StatusCode   int
@@ -133,12 +169,22 @@ func NewClientWithContext(ctx context.Context, options *Options) (*Client, error
 		options.APIBaseURL = DefaultAPIBaseURL
 	}
 
+	if options.DebugMode && options.Logger == nil {
+		options.Logger = log.New(os.Stderr, "", log.LstdFlags)
+	}
+
 	client := &Client{
 		ctx:  ctx,
 		opts: options,
 	}
 
 	return client, nil
+}
+
+func (c *Client) logf(format string, v ...interface{}) {
+	if c.opts.DebugMode && c.opts.Logger != nil {
+		c.opts.Logger.Printf(format, v...)
+	}
 }
 
 func (c *Client) get(path string, respData, reqData interface{}) (*Response, error) {
@@ -346,6 +392,7 @@ func (c *Client) doRequest(req *http.Request, resp *Response) error {
 	c.setRequestHeaders(req)
 
 	rateLimitFunc := c.opts.RateLimitFunc
+	tokenRefreshed := false
 
 	for {
 		if c.lastResponse != nil && rateLimitFunc != nil {
@@ -354,6 +401,8 @@ func (c *Client) doRequest(req *http.Request, resp *Response) error {
 				return err
 			}
 		}
+
+		c.logf("helix: request %s %s", req.Method, req.URL.String())
 
 		response, err := c.opts.HTTPClient.Do(req)
 		if err != nil {
@@ -370,26 +419,38 @@ func (c *Client) doRequest(req *http.Request, resp *Response) error {
 			return err
 		}
 
+		c.logf("helix: response %d %s", response.StatusCode, string(bodyBytes))
+
 		// Only attempt to decode the response if we have a response we can handle
 		if len(bodyBytes) > 0 && resp.StatusCode < http.StatusInternalServerError {
 			if resp.Data != nil && resp.StatusCode < http.StatusBadRequest {
 				// Successful request
 				err = json.Unmarshal(bodyBytes, &resp.Data)
 			} else {
-				// A 401 means Twitch wants us to refresh our token:
-				// https://dev.twitch.tv/docs/authentication/refresh-tokens/
-				if resp.StatusCode == http.StatusUnauthorized && c.canRefreshToken() {
-					if refreshErr := c.refreshToken(); refreshErr != nil {
-						log.Printf("Failed to refresh helix auth token: %v", refreshErr)
-						return err
-					}
-					// Try again now that we have a new token
-					c.setRequestHeaders(req)
-					continue
-				}
-
 				// Failed request
 				err = json.Unmarshal(bodyBytes, &resp)
+				if err != nil {
+					return fmt.Errorf("Failed to decode API response: %s", err.Error())
+				}
+
+				// A 401 may mean Twitch wants us to refresh our token:
+				// https://dev.twitch.tv/docs/authentication/refresh-tokens/
+				// However, if the error is about missing scopes, refreshing
+				// won't help and would cause an infinite loop.
+				if resp.StatusCode == http.StatusUnauthorized && !tokenRefreshed &&
+					!strings.HasPrefix(resp.ErrorMessage, "Missing scope") {
+					refreshed, refreshErr := c.tryRefreshToken()
+					if refreshErr != nil {
+						log.Printf("Failed to refresh helix token: %v", refreshErr)
+						break
+					}
+					if refreshed {
+						tokenRefreshed = true
+						// Try again now that we have a new token
+						c.setRequestHeaders(req)
+						continue
+					}
+				}
 			}
 
 			if err != nil {
@@ -424,6 +485,19 @@ func (c *Client) canRefreshToken() bool {
 		(c.opts.ClientID != "" && c.opts.RefreshToken != "")
 }
 
+// tryRefreshToken attempts to refresh whichever token type is currently in use.
+// It returns true if a refresh was successfully performed, false if no refresh
+// was applicable, and an error if a refresh was attempted but failed.
+func (c *Client) tryRefreshToken() (bool, error) {
+	if c.canRefreshToken() {
+		return true, c.refreshToken()
+	}
+	if c.canRefreshAppToken() {
+		return true, c.refreshAppToken()
+	}
+	return false, nil
+}
+
 func (c *Client) refreshToken() error {
 	resp, err := c.RefreshUserAccessToken(c.opts.RefreshToken)
 	if err != nil || resp.StatusCode != http.StatusOK {
@@ -443,6 +517,33 @@ func (c *Client) refreshToken() error {
 
 	if cb := c.callbacks.onUserAccessTokenRefreshed; cb != nil {
 		go cb(resp.Data.AccessToken, resp.Data.RefreshToken)
+	}
+
+	return nil
+}
+
+func (c *Client) canRefreshAppToken() bool {
+	return c.opts.AppAccessToken != "" && c.opts.ClientID != "" && c.opts.ClientSecret != ""
+}
+
+func (c *Client) refreshAppToken() error {
+	resp, err := c.RequestAppAccessToken(c.opts.AppAccessScopes)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		statusCode := -1
+		var errorMessage string
+		if resp != nil {
+			statusCode = resp.StatusCode
+			errorMessage = resp.ErrorMessage
+		}
+		return fmt.Errorf("failed to refresh app token: (%d: %s) %v", statusCode, errorMessage, err)
+	}
+
+	c.mu.Lock()
+	c.opts.AppAccessToken = resp.Data.AccessToken
+	c.mu.Unlock()
+
+	if cb := c.callbacks.onAppAccessTokenRefreshed; cb != nil {
+		go cb(resp.Data.AccessToken)
 	}
 
 	return nil
@@ -560,4 +661,10 @@ func (c *Client) OnUserAccessTokenRefreshed(f func(newAccessToken, newRefreshTok
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.callbacks.onUserAccessTokenRefreshed = f
+}
+
+func (c *Client) OnAppAccessTokenRefreshed(f func(newAccessToken string)) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.callbacks.onAppAccessTokenRefreshed = f
 }
