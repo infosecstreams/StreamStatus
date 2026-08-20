@@ -15,11 +15,14 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// version is set at build time via -ldflags "-X main.version=...".
+var version = "unknown"
+
 // main do the work.
 func main() {
-	version, _ := debug.ReadBuildInfo()
-	log.Printf("started streamstatus")
-	fmt.Printf("%s\n", version.String())
+	buildInfo, _ := debug.ReadBuildInfo()
+	log.Printf("started streamstatus %s", version)
+	fmt.Printf("%s\n", buildInfo.String())
 
 	// Setup file and repo paths.
 	var repoUrl string

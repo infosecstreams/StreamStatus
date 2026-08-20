@@ -46,7 +46,7 @@ jobs:
       - name: Build Docker image
         run: |
           echo "Building Docker images: $IMAGE_TAG1 and $IMAGE_TAG2"
-          docker build -t "$IMAGE_TAG1" -t "$IMAGE_TAG2" .
+          docker build --build-arg VERSION="${LATEST_TAG}-0-$(git rev-parse --short HEAD)" -t "$IMAGE_TAG1" -t "$IMAGE_TAG2" .
 
       - name: Push Docker image to GitHub Packages
         run: |

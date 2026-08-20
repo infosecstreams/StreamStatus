@@ -523,6 +523,8 @@ func (s *StreamersRepo) eventsubStatus(w http.ResponseWriter, r *http.Request) {
 
 	// If there's a challenge in the request respond with only the challenge to verify the eventsubscription.
 	if vals.Challenge != "" {
+		// Plain text stops browsers rendering a reflected challenge as HTML.
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Write([]byte(vals.Challenge))
 		return
 	}
