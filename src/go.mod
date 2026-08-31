@@ -6,7 +6,7 @@ require (
 	github.com/go-git/go-git/v5 v5.19.2
 	github.com/nicklaw5/helix/v2 v2.34.0
 	github.com/nikoksr/notify v1.5.0
-	github.com/sirupsen/logrus v1.10.1
+	github.com/sirupsen/logrus v1.10.2
 )
 
 require (
