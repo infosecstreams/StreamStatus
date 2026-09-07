@@ -5,7 +5,7 @@ go 1.27.0
 require (
 	github.com/go-git/go-git/v5 v5.19.2
 	github.com/nicklaw5/helix/v2 v2.34.0
-	github.com/nikoksr/notify v1.5.0
+	github.com/nikoksr/notify v1.6.0
 	github.com/sirupsen/logrus v1.10.1
 )
 
