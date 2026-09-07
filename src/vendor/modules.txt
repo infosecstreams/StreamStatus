@@ -142,8 +142,8 @@ github.com/klauspost/cpuid/v2
 # github.com/nicklaw5/helix/v2 v2.34.0
 ## explicit; go 1.25
 github.com/nicklaw5/helix/v2
-# github.com/nikoksr/notify v1.5.0
-## explicit; go 1.24.0
+# github.com/nikoksr/notify v1.6.0
+## explicit; go 1.25.10
 github.com/nikoksr/notify
 github.com/nikoksr/notify/service/pushbullet
 # github.com/pjbgf/sha1cd v0.6.0
