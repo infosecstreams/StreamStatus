@@ -128,6 +128,18 @@ func main() {
 		repo.startLiveRefresh(liveRefreshInterval)
 		repo.startStatsJobs(statsInterval)
 	}
+	// --- bot-schedule: schedule polling and /api/schedule.{json,ics} ---
+	repo.schedule = newScheduleState(client)
+	if err := repo.schedule.adherence.loadHistory(scheduleHistoryPath()); err != nil {
+		log.Warnf("schedule track record: %s", err)
+	}
+	if err := repo.schedule.history.load(streamHistoryPath()); err != nil {
+		log.Warnf("stream history: %s", err)
+	}
+	repo.startStreamHistory()
+	repo.startScheduleRefresher(scheduleRefreshInterval)
+	nextStreamAt = repo.nextStreamAt
+	// --- end bot-schedule ---
 	port := ":8080"
 	// Google Cloud Run defaults to 8080. Their platform
 	// sets the $PORT ENV var if you override it with, e.g.:
@@ -143,6 +155,9 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/webhook/callbacks", repo.eventsubStatus)
 	repo.registerAPI(mux)
+	for path, h := range repo.scheduleHandlers() {
+		mux.HandleFunc(path, h)
+	}
 	ln, err := net.Listen("tcp", port)
 	if err != nil {
 		log.Fatalf("error: listening on %s: %s", port, err)

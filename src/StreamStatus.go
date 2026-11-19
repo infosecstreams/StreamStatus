@@ -100,6 +100,8 @@ type StreamersRepo struct {
 	// changes to the site repo. Roster moves (reactivating an inactive
 	// streamer who went live) are still committed.
 	statusCommitsOff bool
+	// schedule holds Twitch stream schedules (schedule.go); nil disables them.
+	schedule *scheduleState
 }
 
 // streamsClient is the slice of the Helix API the bot uses; *helix.Client
