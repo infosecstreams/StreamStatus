@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"runtime/debug"
+	"strconv"
 	"sync"
 	"time"
 
@@ -78,6 +79,33 @@ func main() {
 		reconcileInactive: os.Getenv("SS_RECONCILE_INACTIVE") == "true",
 	}
 
+	if v := os.Getenv("SS_COMMIT_STATUS"); v != "" {
+		commit, err := strconv.ParseBool(v)
+		if err != nil {
+			log.Fatalf("error: invalid SS_COMMIT_STATUS %q (want true or false)", v)
+		}
+		repo.statusCommitsOff = !commit
+	}
+	if repo.statusCommitsOff {
+		log.Warn("SS_COMMIT_STATUS=false: live status is only served by /api/status.json; only roster moves are committed")
+	}
+
+	// Live state and stream history. Without the database the bot still
+	// keeps the site in sync, it just can't serve /api/status.json.
+	dbPath := os.Getenv("SS_DB_PATH")
+	if dbPath == "" {
+		dbPath = defaultDBPath
+	}
+	if db, err := openStore(dbPath); err != nil {
+		log.Errorf("opening stream history database %s failed, /api/status.json disabled: %s", dbPath, err)
+	} else if live, err := newLiveState(db); err != nil {
+		log.Errorf("loading stream history database %s failed, /api/status.json disabled: %s", dbPath, err)
+	} else {
+		log.Printf("stream history database: %s", dbPath)
+		repo.live = live
+		repo.users = client
+	}
+
 	reconcileInterval := defaultReconcileInterval
 	if v := os.Getenv("SS_RECONCILE_INTERVAL"); v != "" {
 		d, err := time.ParseDuration(v)
@@ -91,6 +119,9 @@ func main() {
 	go keepAppTokenFresh(client, tokenTTL, repo.runInWorker)
 	repo.startReconciler(reconcileInterval)
 	log.Printf("reconciling live status every %s (inactive streamers: %v)", reconcileInterval, repo.reconcileInactive)
+	if repo.live != nil {
+		repo.startLiveRefresh(liveRefreshInterval)
+	}
 	port := ":8080"
 	// Google Cloud Run defaults to 8080. Their platform
 	// sets the $PORT ENV var if you override it with, e.g.:
@@ -103,7 +134,9 @@ func main() {
 
 	// Listen before creating subscriptions: Twitch verifies each new one
 	// by calling the callback straight away.
-	http.HandleFunc("/webhook/callbacks", repo.eventsubStatus)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/webhook/callbacks", repo.eventsubStatus)
+	repo.registerAPI(mux)
 	ln, err := net.Listen("tcp", port)
 	if err != nil {
 		log.Fatalf("error: listening on %s: %s", port, err)
@@ -116,6 +149,7 @@ func main() {
 		log.Warn("no SS_CALLBACK_URL specified in environment, not managing EventSub subscriptions")
 	}
 	srv := &http.Server{
+		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,

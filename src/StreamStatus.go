@@ -88,6 +88,16 @@ type StreamersRepo struct {
 	// lastEvent is when each streamer (lowercased) last had an EventSub
 	// event handled; reconciliation leaves them alone for a while after.
 	lastEvent map[string]time.Time
+
+	// live is the in-memory live state behind /api/status.json, backed by
+	// the stream history database; nil turns it off.
+	live *liveState
+	// users maps roster logins to Twitch user IDs for live state.
+	users usersClient
+	// statusCommitsOff (SS_COMMIT_STATUS=false) stops committing status
+	// changes to the site repo. Roster moves (reactivating an inactive
+	// streamer who went live) are still committed.
+	statusCommitsOff bool
 }
 
 // streamsClient is the slice of the Helix API the bot uses; *helix.Client
@@ -527,6 +537,9 @@ func updateMarkdown(repo *StreamersRepo) error {
 		}
 		return err
 	}
+	if repo.statusCommitsOff && !repo.reactivated {
+		return &NoChangeNeededError{err: fmt.Sprintf("status commits off, not committing %s", repo.streamer)}
+	}
 	err = repo.writefile(repo.indexMdText, repo.inactiveMdText)
 	if err != nil {
 		log.Printf("error writing file: %s", err)
@@ -720,20 +733,25 @@ func jobFromNotification(vals eventSubNotification) (statusJob, bool) {
 	case "stream.offline":
 		var e helix.EventSubStreamOfflineEvent
 		_ = json.Unmarshal(vals.Event, &e)
-		return statusJob{kind: jobOffline, userID: e.BroadcasterUserID, userName: loginOr(e.BroadcasterUserLogin, e.BroadcasterUserName)}, true
+		return statusJob{kind: jobOffline, userID: e.BroadcasterUserID, userName: loginOr(e.BroadcasterUserLogin, e.BroadcasterUserName),
+			userLogin: e.BroadcasterUserLogin, displayName: e.BroadcasterUserName}, true
 	case "stream.online":
 		var e helix.EventSubStreamOnlineEvent
 		_ = json.Unmarshal(vals.Event, &e)
-		return statusJob{kind: jobOnline, userID: e.BroadcasterUserID, userName: loginOr(e.BroadcasterUserLogin, e.BroadcasterUserName)}, true
+		return statusJob{kind: jobOnline, userID: e.BroadcasterUserID, userName: loginOr(e.BroadcasterUserLogin, e.BroadcasterUserName),
+			userLogin: e.BroadcasterUserLogin, displayName: e.BroadcasterUserName}, true
 	case "channel.update":
 		var e helix.EventSubChannelUpdateEvent
 		_ = json.Unmarshal(vals.Event, &e)
 		return statusJob{
-			kind:     jobChannelUpdate,
-			userID:   e.BroadcasterUserID,
-			userName: loginOr(e.BroadcasterUserLogin, e.BroadcasterUserName),
-			game:     e.CategoryName,
-			language: e.Language,
+			kind:        jobChannelUpdate,
+			userID:      e.BroadcasterUserID,
+			userName:    loginOr(e.BroadcasterUserLogin, e.BroadcasterUserName),
+			game:        e.CategoryName,
+			language:    e.Language,
+			title:       e.Title,
+			userLogin:   e.BroadcasterUserLogin,
+			displayName: e.BroadcasterUserName,
 		}, true
 	}
 	return statusJob{}, false
@@ -769,6 +787,10 @@ func (s *StreamersRepo) applyStatus(streamer string, online bool, game, language
 // commitAndPush applies the prepared update and reports whether a change
 // was pushed. "No change needed" is not an error.
 func (s *StreamersRepo) commitAndPush() bool {
+	if s.statusCommitsOff && !s.mayReactivate() {
+		log.Debugf("status commits off, not committing %s", s.streamer)
+		return false
+	}
 	if err := updateMarkdown(s); err != nil {
 		var noChange *NoChangeNeededError
 		if errors.As(err, &noChange) {
@@ -823,6 +845,21 @@ func (s *StreamersRepo) applyPrelive(streamer, game, language string, since time
 	s.tags = nil
 	defer func() { s.prelive = false }()
 	return s.commitAndPush()
+}
+
+// mayReactivate reports whether the prepared update could move an inactive
+// streamer back to the active list: they are being shown live and are in
+// inactive_streamers.csv (as of the last sync).
+func (s *StreamersRepo) mayReactivate() bool {
+	if !s.online || s.prelive || s.onlyIfPrelive || s.inactiveCsvPath == "" {
+		return false
+	}
+	names, err := csvNames(s.inactiveCsvPath)
+	if err != nil {
+		// Can't tell; let the normal path (which syncs first) decide.
+		return true
+	}
+	return contains(names, s.streamer)
 }
 
 // clearPrelive turns a 🟡 row back to offline; other rows are untouched.

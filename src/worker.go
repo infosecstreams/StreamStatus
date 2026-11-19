@@ -19,6 +19,8 @@ const (
 	jobReconcile     jobKind = "reconcile"
 	// jobSyncSubscriptions makes sure EventSub subscriptions exist.
 	jobSyncSubscriptions jobKind = "sync-subscriptions"
+	// jobRefreshLive refreshes viewers and titles of live streamers.
+	jobRefreshLive jobKind = "refresh-live"
 	// jobFunc runs fn on the worker, e.g. token renewal, which must not
 	// race the Helix calls the worker makes.
 	jobFunc jobKind = "func"
@@ -32,6 +34,11 @@ type statusJob struct {
 	userName string
 	game     string
 	language string
+	// title, userLogin and displayName come from the event as sent; they
+	// feed live state (userName is what the site rows are matched on).
+	title       string
+	userLogin   string
+	displayName string
 }
 
 // jobQueueSize bounds how many events can wait behind a slow git push.
@@ -138,11 +145,13 @@ func (s *StreamersRepo) process(job statusJob) {
 	switch job.kind {
 	case jobOnline, jobOffline, jobChannelUpdate:
 		s.noteEvent(job.userName)
+		s.liveEvent(job, timeNow())
 	}
 
 	switch job.kind {
 	case jobOffline:
 		log.Printf("processing offline event for: %s (%s)", job.userName, job.userID)
+		s.liveOffline(job.userID)
 		s.applyStatus(job.userName, false, "", "", nil)
 
 	case jobOnline:
@@ -158,6 +167,7 @@ func (s *StreamersRepo) process(job statusJob) {
 			log.Warnf("%s (%s) not listed by Helix after online event; leaving status unchanged", job.userName, job.userID)
 			return
 		}
+		s.liveOnline(job.userID, stream)
 		name := job.userName
 		if name == "" {
 			name = stream.UserLogin
@@ -177,6 +187,7 @@ func (s *StreamersRepo) process(job statusJob) {
 		if !live {
 			// An offline streamer editing their title or category is about
 			// to go live: show them 🟡 if it's an infosec category.
+			s.livePrelive(job)
 			if contains(VALID_GAMES, job.game) {
 				log.Infof("channel update for offline channel %s (category %q): marking pre-live", job.userName, job.game)
 				s.applyPrelive(job.userName, job.game, job.language, timeNow())
@@ -186,7 +197,13 @@ func (s *StreamersRepo) process(job statusJob) {
 			}
 			return
 		}
-		// The event's category and language are newer than Helix's.
+		// The event's category, title and language are newer than Helix's.
+		updated := stream
+		updated.GameName, updated.Language = job.game, job.language
+		if job.title != "" {
+			updated.Title = job.title
+		}
+		s.liveOnline(job.userID, updated)
 		s.applyStatus(job.userName, contains(VALID_GAMES, job.game), job.game, job.language, stream.Tags)
 
 	case jobReconcile:
@@ -194,6 +211,9 @@ func (s *StreamersRepo) process(job statusJob) {
 
 	case jobSyncSubscriptions:
 		s.syncSubscriptions()
+
+	case jobRefreshLive:
+		s.refreshLive()
 
 	case jobFunc:
 		job.fn()

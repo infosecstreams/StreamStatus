@@ -76,28 +76,49 @@ func (s *StreamersRepo) reconcile() {
 		log.Errorf("reconcile: reading %s failed, skipping: %s", s.activeCsvPath, err)
 		return
 	}
-	var inactive []string
-	if s.reconcileInactive && s.inactiveCsvPath != "" {
-		inactive, err = csvNames(s.inactiveCsvPath)
+	// Live state covers inactive streamers too; the site only reactivates
+	// them with SS_RECONCILE_INACTIVE.
+	var inactive, allInactive []string
+	if (s.reconcileInactive || s.live != nil) && s.inactiveCsvPath != "" {
+		allInactive, err = csvNames(s.inactiveCsvPath)
 		if err != nil {
 			log.Errorf("reconcile: reading %s failed, ignoring inactive streamers: %s", s.inactiveCsvPath, err)
-			inactive = nil
+			allInactive = nil
 		}
 	}
+	if s.reconcileInactive {
+		inactive = allInactive
+	}
+	renamed := s.resolveRoster(append(append([]string{}, active...), allInactive...), timeNow())
 
 	// Rows marked 🟢 for someone missing from streamers.csv (hand-edited,
 	// renamed) are checked too, or they'd stay green forever.
 	active = withMarkedRows(active, onlineStreamers(s.indexMdText))
 
-	live, err := s.fetchLiveByLogin(append(append([]string{}, active...), inactive...))
+	query := append(append(append([]string{}, active...), allInactive...), renamed...)
+	if s.live == nil {
+		query = append(append([]string{}, active...), inactive...)
+	}
+	live, err := s.fetchLiveByLogin(query)
 	if err != nil {
 		// Acting on a partial answer would mark live streamers offline.
 		log.Errorf("reconcile: querying Helix failed, skipping: %s", err)
+		if s.live != nil {
+			s.live.rebuild(timeNow())
+		}
 		return
 	}
+	s.reconcileLive(live)
 
-	changes := skipRecentlyEvented(diffLiveState(active, inactive, onlineStreamers(s.indexMdText), live), s.lastEvent, timeNow(), reconcileGrace)
-	expired := expiredPrelive(preliveStreamers(s.indexMdText), live, timeNow(), preliveTTL)
+	diffActive := active
+	var expired []string
+	if s.statusCommitsOff {
+		// Status isn't committed; only reactivations (roster moves) are.
+		diffActive = nil
+	} else {
+		expired = expiredPrelive(preliveStreamers(s.indexMdText), live, timeNow(), preliveTTL)
+	}
+	changes := skipRecentlyEvented(diffLiveState(diffActive, inactive, onlineStreamers(s.indexMdText), live), s.lastEvent, timeNow(), reconcileGrace)
 	for _, name := range expired {
 		log.Infof("reconcile: pre-live marker for %s expired", name)
 		s.clearPrelive(name)
