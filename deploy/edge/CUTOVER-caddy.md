@@ -3,7 +3,7 @@
 Audience: the coordinator, on the host (`ssh iss`, `cd ~/hosting`). Expected
 interruption: **2–4 seconds** of refused connections on p.infosecstreams.com,
 during the port hand-off in step 6. Twitch retries webhook deliveries, the
-site retries `/api/status.json` every 15 s, and Plausible's script loads after
+site retries `/streamstatus/status.json` every 15 s, and Plausible's script loads after
 idle, so nobody should notice. Caddy has its own certificate **before** the
 hand-off, so there is no window without TLS.
 
@@ -100,8 +100,10 @@ t -o /dev/null -w '%{http_code} plausible /\n' -A Mozilla/5.0 https://p.infosecs
 t -o /dev/null -w '%{http_code} script.js %header{content-encoding}\n' -A Mozilla/5.0 -H 'Accept-Encoding: gzip' https://p.infosecstreams.com/js/script.js
 t -o /dev/null -w '%{http_code} webhook GET (want 405)\n' https://p.infosecstreams.com/webhook/callbacks
 t -o /dev/null -w '%{http_code} plausible /api/health\n' -A Mozilla/5.0 https://p.infosecstreams.com/api/health
+t -o /dev/null -w '%{http_code} plausible LiveView longpoll (not 404 from the bot)\n' -A Mozilla/5.0 https://p.infosecstreams.com/live/longpoll
+t -o /dev/null -w '%{http_code} backspin\n' --resolve backspin.highvibes.cloud:8080:$ip http://backspin.highvibes.cloud:8080/
 # once the bot serves the API:
-t -D - -o /dev/null -H 'Accept-Encoding: gzip' https://p.infosecstreams.com/api/status.json
+t -D - -o /dev/null -H 'Accept-Encoding: gzip' https://p.infosecstreams.com/streamstatus/status.json
 ```
 
 The certificate it presents must be issued for `p.infosecstreams.com`
@@ -123,7 +125,7 @@ docker-compose stop -t 3 nginx letsencrypt && docker-compose up -d --no-deps cad
 From any machine:
 
 ```bash
-deploy/edge/measure.sh https://p.infosecstreams.com/ https://p.infosecstreams.com/js/script.js https://p.infosecstreams.com/api/status.json
+deploy/edge/measure.sh https://p.infosecstreams.com/ https://p.infosecstreams.com/js/script.js https://p.infosecstreams.com/streamstatus/status.json
 ```
 
 Expect: `server` header gone; `alt-svc: h3=":443"`; HTTP/3 `3 200`;

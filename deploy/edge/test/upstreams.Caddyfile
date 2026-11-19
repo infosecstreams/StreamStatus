@@ -7,7 +7,7 @@
 	handle /webhook/callbacks {
 		respond "bot webhook {method}" 200
 	}
-	@api path_regexp ^/api/
+	@api path /streamstatus/*
 	handle @api {
 		root * /srv/bot
 		header Cache-Control "public, max-age=15"

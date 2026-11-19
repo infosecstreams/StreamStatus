@@ -30,13 +30,13 @@
 # Pages that read live status: preload it too (it matches the <link rel=preload>
 # in the HTML, so the browser reuses one request).
 /
-  Link: <https://p.infosecstreams.com/api/status.json>; rel=preload; as=fetch; crossorigin
+  Link: <https://p.infosecstreams.com/streamstatus/status.json>; rel=preload; as=fetch; crossorigin
 /inactive
-  Link: <https://p.infosecstreams.com/api/status.json>; rel=preload; as=fetch; crossorigin
+  Link: <https://p.infosecstreams.com/streamstatus/status.json>; rel=preload; as=fetch; crossorigin
 /:lang/
-  Link: <https://p.infosecstreams.com/api/status.json>; rel=preload; as=fetch; crossorigin
+  Link: <https://p.infosecstreams.com/streamstatus/status.json>; rel=preload; as=fetch; crossorigin
 /:lang/inactive
-  Link: <https://p.infosecstreams.com/api/status.json>; rel=preload; as=fetch; crossorigin
+  Link: <https://p.infosecstreams.com/streamstatus/status.json>; rel=preload; as=fetch; crossorigin
 
 /_astro/*
   ! Link

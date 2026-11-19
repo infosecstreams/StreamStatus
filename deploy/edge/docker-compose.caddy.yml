@@ -24,6 +24,7 @@ services:
       - "80:80"
       - "443:443"
       - "443:443/udp"   # HTTP/3 (QUIC). The security group must allow UDP 443.
+      - "8080:8080"     # backspin.highvibes.cloud, as nginx publishes today
     environment:
       # ACME account contact. Optional; defaults to the security.txt address.
       ACME_EMAIL: security.txt@infosecstreams.com
@@ -34,8 +35,7 @@ services:
       # (the Let's Encrypt rate limit is 5 identical certs a week).
       - caddy-data:/data
       - caddy-config:/config
-      # Uncomment with the backspin block in the Caddyfile:
-      # - /home/ec2-user/backspin:/srv/backspin:ro
+      - /home/ec2-user/backspin:/srv/backspin:ro
     # Measured at ~27 MiB RSS idle in the local test; nginx was ~10 MiB.
     mem_limit: 128m
     logging:

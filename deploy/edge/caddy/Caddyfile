@@ -4,10 +4,11 @@
 #
 # What it serves:
 #   /webhook/callbacks           Twitch EventSub -> streamstatus:8080 (POST only)
-#   /api/<name>.json|.ics,
-#   /api/stats/<id|login>.json   StreamStatus public API -> streamstatus:8080
+#   /streamstatus/*              StreamStatus public API -> streamstatus:8080
 #   everything else              Plausible CE -> plausible:8000 (including
-#                                Plausible's own /api/event, /api/stats/<domain>/...)
+#                                Plausible's /api/* and its LiveView /live/websocket
+#                                and /live/longpoll)
+#   backspin.highvibes.cloud:8080  static files (as in the nginx config today)
 #
 # Upstreams are compose service names. Caddy resolves them on every new
 # connection, so a recreated container (new IP after a deploy) needs no
@@ -109,15 +110,12 @@ p.infosecstreams.com {
 		}
 	}
 
-	# StreamStatus public API. Only the bot's exact path shapes go to the bot:
-	# /api/<name>.json, /api/<name>.ics and /api/stats/<id|login>.json.
-	# Plausible owns the rest of /api/ (/api/event, /api/health,
-	# /api/stats/<domain>/<metric>, /api/v1/..., /api/docs/query/schema.json),
-	# so a blanket `/api/*` route would break analytics ingestion.
-	@bot_api {
-		path_regexp ^/api/([a-z0-9_-]+\.(json|ics)|stats/[^/]+\.json)$
-		not path /api/docs/*
-	}
+	# StreamStatus public API (CONTRACT.md: base /streamstatus/): status.json,
+	# schedule.json, schedule.ics, stats.json, stats/<id|login>.json. The path is
+	# passed through unchanged. Plausible owns /api/* (POST /api/event on every
+	# pageview, /api/stats/<domain>/..., /api/v1|v2) and /live/* (LiveView), so
+	# neither prefix may ever be routed to the bot.
+	@bot_api path /streamstatus/*
 	handle @bot_api {
 		@not_read not method GET HEAD
 		respond @not_read 405
@@ -161,18 +159,20 @@ http:// {
 	abort
 }
 
-# backspin.highvibes.cloud on :8080 (temporary nginx block). Disabled: the
-# security group does not open 8080, and the streamstatus compose snippet on
-# the ci-deploy-security branch publishes 127.0.0.1:8080 for health checks,
-# which would clash. To keep it, uncomment, publish another host port in
-# docker-compose.caddy.yml (e.g. "8081:8080") and mount /home/ec2-user/backspin.
-#http://backspin.highvibes.cloud:8080 {
-#	root * /srv/backspin
-#	try_files {path} {path}/ /index.html
-#	file_server
-#	header {
-#		X-Content-Type-Options nosniff
-#		X-Frame-Options DENY
-#		Referrer-Policy no-referrer
-#	}
-#}
+# backspin.highvibes.cloud on :8080, ported from the nginx block (marked
+# "temporary" there). Plain HTTP, as before. The iss-sg security group does
+# not open 8080 (terraform), so it is reachable only if the group was changed
+# outside terraform. Drop this block and the 8080 port/volume in compose when
+# backspin is gone. Note: ci-deploy-security's streamstatus service publishes
+# 127.0.0.1:8080, which clashes with this port; that publish must move (e.g.
+# 127.0.0.1:18080 and HEALTH_URL to match) or this block must go.
+http://backspin.highvibes.cloud:8080 {
+	root * /srv/backspin
+	try_files {path} {path}/ /index.html
+	file_server
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy no-referrer
+	}
+}

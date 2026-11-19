@@ -3,7 +3,7 @@
 # Run before and after a change and diff the output.
 #
 #   deploy/edge/measure.sh                 # default URLs, 5 timing runs
-#   RUNS=10 deploy/edge/measure.sh https://infosecstreams.com/ https://p.infosecstreams.com/api/status.json
+#   RUNS=10 deploy/edge/measure.sh https://infosecstreams.com/ https://p.infosecstreams.com/streamstatus/status.json
 #
 # Needs curl and openssl. HTTP/3 checks use the local curl if it has HTTP3,
 # else the ymuski/curl-http3 container when docker is available.
@@ -12,7 +12,7 @@ set -euo pipefail
 RUNS=${RUNS:-5}
 UA='infosecstreams-edge-measure/1'
 if [ $# -gt 0 ]; then URLS=("$@"); else
-  URLS=(https://infosecstreams.com/ https://p.infosecstreams.com/ https://p.infosecstreams.com/js/script.js https://p.infosecstreams.com/api/status.json)
+  URLS=(https://infosecstreams.com/ https://p.infosecstreams.com/ https://p.infosecstreams.com/js/script.js https://p.infosecstreams.com/streamstatus/status.json)
 fi
 
 h3curl() {
