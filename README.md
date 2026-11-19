@@ -98,9 +98,13 @@ Or, export required ENV vars:
 export SS_PORT=3000
 # Secret key to HMAC EventSub message
 export SS_SECRETKEY=secret
-# GitHub personal access token
+# GitHub access to the site repo, either a GitHub App (preferred; the bot mints
+# and refreshes 1-hour installation tokens limited to the site repo):
+export SS_GH_APP_ID=123456                # App ID (or the App's client ID)
+export SS_GH_APP_INSTALLATION_ID=12345678 # from the App's installation URL
+export SS_GH_APP_PRIVATE_KEY_PATH=/run/secrets/streamstatus-github-app.pem
+# ...or, when the three SS_GH_APP_* are unset, a personal access token:
 export SS_TOKEN=token
-# GitHub username
 export SS_USERNAME=username
 # Twitch Client ID
 export TW_CLIENT_ID=client_id
@@ -137,3 +141,11 @@ docker-compose --build up
 # or to background it:
 docker-compose --build up -d
 ```
+
+## Releases and deploys
+
+Push a `vX.Y.Z` tag. CI tests, builds, signs (keyless cosign + build provenance) and deploys the
+exact digest to production with automatic rollback. See [deploy/README.md](deploy/README.md) for
+how it works, the one-time host/GitHub setup and how to test a deploy safely, and
+[deploy/GITHUB_APP.md](deploy/GITHUB_APP.md) for creating the GitHub App the bot pushes as.
+
