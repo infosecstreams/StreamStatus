@@ -61,8 +61,21 @@ type StreamersRepo struct {
 	game               string
 	tags               []string
 	notificationClient *notify.Notify
-	client             *helix.Client
+	client             streamsClient
 	mutex              *sync.Mutex
+
+	jobs         chan statusJob
+	pending      sync.WaitGroup
+	seenMessages *messageIDCache
+	// reconcileInactive lets reconciliation reactivate live streamers that
+	// are on the inactive list (SS_RECONCILE_INACTIVE).
+	reconcileInactive bool
+}
+
+// streamsClient is the slice of the Helix API the bot uses; *helix.Client
+// satisfies it and tests substitute a fake.
+type streamsClient interface {
+	GetStreams(params *helix.StreamsParams) (*helix.StreamsResponse, error)
 }
 
 // NoChangeNeededError is a struct for a custom error handler
@@ -493,12 +506,16 @@ type eventSubNotification struct {
 	Subscription helix.EventSubSubscription `json:"subscription"`
 }
 
-// eventsubStatus takes and http Request and ResponseWriter to handle the incoming webhook request.
+// eventsubStatus handles an incoming EventSub webhook. It verifies the
+// signature, de-duplicates on the message ID, queues the event for the
+// background worker and acknowledges immediately: Twitch counts a delivery
+// as failed (and retries it) if the response takes more than a few seconds,
+// and the git sync/commit/push for an event takes far longer than that.
 func (s *StreamersRepo) eventsubStatus(w http.ResponseWriter, r *http.Request) {
-	// Read the request body.
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		log.Println(err)
+		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 	defer r.Body.Close()
@@ -509,15 +526,13 @@ func (s *StreamersRepo) eventsubStatus(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusTeapot)
 		w.Write([]byte("I am, unfortunately for you, a teapot.\n"))
 		return
-	} else {
-		log.Println("verified signature on message")
 	}
+	log.Println("verified signature on message")
 
-	// Read the request into eventSubNotification struct.
 	var vals eventSubNotification
-	err = json.NewDecoder(bytes.NewReader(body)).Decode(&vals)
-	if err != nil {
+	if err := json.NewDecoder(bytes.NewReader(body)).Decode(&vals); err != nil {
 		log.Println(err)
+		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
@@ -528,136 +543,94 @@ func (s *StreamersRepo) eventsubStatus(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(vals.Challenge))
 		return
 	}
-	w.Write([]byte("OK"))
 
-	switch vals.Subscription.Type {
-
-	case "stream.offline":
-		var offlineEvent helix.EventSubStreamOfflineEvent
-		_ = json.NewDecoder(bytes.NewReader(vals.Event)).Decode(&offlineEvent)
-		// Check the requests headers for Twitch-Eventsub-Message-Type and return 200, OK if it's != 0 and return.
-		if r.Header.Get("Twitch-Eventsub-Message-Retry") != "0" {
-			log.Warnf("ignoring duplicate event from Twitch for %s (%s)", offlineEvent.BroadcasterUserName, offlineEvent.BroadcasterUserID)
-			return
-		}
-		log.Printf("got offline event for: %s (%s)", offlineEvent.BroadcasterUserName, offlineEvent.BroadcasterUserID)
-
-		// Serialize the whole event-handling path: per-event state and the
-		// git worktree are shared across concurrent webhook deliveries.
-		s.mutex.Lock()
-		defer s.mutex.Unlock()
-
-		s.streamer = offlineEvent.BroadcasterUserName
-		s.online = false
-		s.language = ""
-		s.game = ""
-		err := updateMarkdown(s)
-		if err == nil {
-			updateRepo(s)
-			pushRepo(s)
-		} else {
-			log.Warnf("Repository doesn't need to be changed for %s", s.streamer)
-		}
-
-	case "stream.online":
-		var onlineEvent helix.EventSubStreamOnlineEvent
-		_ = json.NewDecoder(bytes.NewReader(vals.Event)).Decode(&onlineEvent)
-		// Check the requests headers for Twitch-Eventsub-Message-Type and return 200, OK if it's != 0 and return.
-		if r.Header.Get("Twitch-Eventsub-Message-Retry") != "0" {
-			log.Warnf("ignoring duplicate event from Twitch for %s (%s)", onlineEvent.BroadcasterUserName, onlineEvent.BroadcasterUserID)
-			return
-		}
-		log.Printf("got online event for: %s (%s)", onlineEvent.BroadcasterUserName, onlineEvent.BroadcasterUserID)
-
-		// Serialize the whole event-handling path: per-event state and the
-		// git worktree are shared across concurrent webhook deliveries.
-		s.mutex.Lock()
-		defer s.mutex.Unlock()
-
-		var stream helix.Stream
-		for i := 1; i <= 3; i++ {
-			err = nil
-			stream, err = s.fetchStreamInfo(onlineEvent.BroadcasterUserID)
-			if err != nil {
-				errorString := fmt.Sprintf("Error fetching stream info for %s (uid: %s). error: %s", onlineEvent.BroadcasterUserName, onlineEvent.BroadcasterUserID, err)
-				log.Error(errorString)
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-				s.notificationClient.Send(ctx, "failed to get stream info", errorString)
-				if i == 3 {
-					log.Error("Failed to fetch stream info after 3 attempts, giving up.")
-					return
-				}
-			} else {
-				break
-			}
-		}
-		if len(stream.GameName) != 0 {
-			s.game = stream.GameName
-		}
-		if len(stream.Tags) != 0 {
-			s.tags = stream.Tags
-		}
-		s.streamer = onlineEvent.BroadcasterUserName
-		// Show streamer as offline if they're not "doing infosec"
-		// s.online = contains(VALID_GAMES, s.game) || containsTags(OPTIONAL_TAGS, s.tags)
-		s.online = contains(VALID_GAMES, s.game)
-		s.language = strings.ToUpper(stream.Language)
-
-		err = updateMarkdown(s)
-		if err == nil {
-			updateRepo(s)
-			pushRepo(s)
-		} else {
-			log.Warnf("Repository doesn't need to be changed for %s", s.streamer)
-		}
-
-	case "channel.update":
-		var updateEvent helix.EventSubChannelUpdateEvent
-		_ = json.NewDecoder(bytes.NewReader(vals.Event)).Decode(&updateEvent)
-		log.Printf("got channel update event for: %s (%s)", updateEvent.BroadcasterUserName, updateEvent.BroadcasterUserID)
-		// Handle the channel.update event here
-		log.Printf("Event received: %+v", updateEvent)
-
-		// Serialize the whole event-handling path: per-event state and the
-		// git worktree are shared across concurrent webhook deliveries.
-		s.mutex.Lock()
-		defer s.mutex.Unlock()
-
-		s.streamer = updateEvent.BroadcasterUserName
-		s.game = updateEvent.CategoryName
-		s.online = contains(VALID_GAMES, s.game)
-		s.language = strings.ToUpper(updateEvent.Language)
-
-		err = updateMarkdown(s)
-		if err == nil {
-			updateRepo(s)
-			pushRepo(s)
-		} else {
-			log.Warnf("Repository doesn't need to be changed for %s", s.streamer)
-		}
-
-	default:
-		log.Errorf("error: event type %s has not been implemented -- pull requests welcome!", r.Header.Get("Twitch-Eventsub-Subscription-Type"))
+	// Twitch re-sends a message (same ID) until it gets a timely 2xx. Ack
+	// repeats without doing the work twice.
+	msgID := r.Header.Get("Twitch-Eventsub-Message-Id")
+	if s.seenMessages.seenOrAdd(msgID) {
+		log.Warnf("ignoring duplicate %s message %s", vals.Subscription.Type, msgID)
+		w.Write([]byte("OK"))
+		return
 	}
+
+	job, ok := jobFromNotification(vals)
+	if !ok {
+		log.Errorf("error: event type %s has not been implemented -- pull requests welcome!", vals.Subscription.Type)
+		w.Write([]byte("OK"))
+		return
+	}
+	if !s.enqueue(job) {
+		// Let Twitch redeliver once the queue has drained.
+		s.seenMessages.forget(msgID)
+		log.Errorf("event queue full, asking Twitch to retry %s for %s", job.kind, job.userName)
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+	log.Printf("queued %s event for: %s (%s)", job.kind, job.userName, job.userID)
+	w.Write([]byte("OK"))
 }
 
-func (s *StreamersRepo) fetchStreamInfo(user_id string) (helix.Stream, error) {
-	var stream helix.Stream
+// jobFromNotification converts a verified EventSub notification into a
+// worker job. It reports false for subscription types we don't handle.
+func jobFromNotification(vals eventSubNotification) (statusJob, bool) {
+	switch vals.Subscription.Type {
+	case "stream.offline":
+		var e helix.EventSubStreamOfflineEvent
+		_ = json.Unmarshal(vals.Event, &e)
+		return statusJob{kind: jobOffline, userID: e.BroadcasterUserID, userName: e.BroadcasterUserName}, true
+	case "stream.online":
+		var e helix.EventSubStreamOnlineEvent
+		_ = json.Unmarshal(vals.Event, &e)
+		return statusJob{kind: jobOnline, userID: e.BroadcasterUserID, userName: e.BroadcasterUserName}, true
+	case "channel.update":
+		var e helix.EventSubChannelUpdateEvent
+		_ = json.Unmarshal(vals.Event, &e)
+		return statusJob{
+			kind:     jobChannelUpdate,
+			userID:   e.BroadcasterUserID,
+			userName: e.BroadcasterUserName,
+			game:     e.CategoryName,
+			language: e.Language,
+		}, true
+	}
+	return statusJob{}, false
+}
+
+// applyStatus writes one streamer's status through the normal
+// update/commit/push path. Callers must hold s.mutex (the worker does).
+func (s *StreamersRepo) applyStatus(streamer string, online bool, game, language string, tags []string) {
+	s.streamer = streamer
+	s.online = online
+	s.game = game
+	s.language = strings.ToUpper(language)
+	s.tags = tags
+	if !online {
+		s.game = ""
+		s.language = ""
+		s.tags = nil
+	}
+	if err := updateMarkdown(s); err != nil {
+		log.Warnf("Repository doesn't need to be changed for %s", s.streamer)
+		return
+	}
+	updateRepo(s)
+	pushRepo(s)
+}
+
+// fetchStreamInfo returns the live stream for user_id. live is false when
+// Helix lists no stream for the user, which right after stream.online often
+// just means Helix hasn't caught up yet -- it does not mean offline.
+func (s *StreamersRepo) fetchStreamInfo(user_id string) (stream helix.Stream, live bool, err error) {
 	log.Infof("trying to get stream info for uid %s", user_id)
-	streams, err := s.client.GetStreams(
-		&helix.StreamsParams{
-			UserIDs: []string{user_id},
-		})
+	streams, err := s.client.GetStreams(&helix.StreamsParams{UserIDs: []string{user_id}})
 	if err != nil {
-		return helix.Stream{}, err
+		return helix.Stream{}, false, err
 	}
 	if streams.ErrorStatus != 0 {
-		return helix.Stream{}, fmt.Errorf("error fetching stream info status=%d %s error=%s", streams.ErrorStatus, streams.Error, streams.ErrorMessage)
+		return helix.Stream{}, false, fmt.Errorf("error fetching stream info status=%d %s error=%s", streams.ErrorStatus, streams.Error, streams.ErrorMessage)
 	}
-	// We really should only get one stream so just return the first one.
-	if len(streams.Data.Streams) > 0 {
-		stream = streams.Data.Streams[0]
+	if len(streams.Data.Streams) == 0 {
+		return helix.Stream{}, false, nil
 	}
-	return stream, nil
+	return streams.Data.Streams[0], true, nil
 }

@@ -7,6 +7,7 @@ import (
 	"runtime/debug"
 	"strings"
 	"sync"
+	"time"
 
 	httpauth "github.com/go-git/go-git/v5/plumbing/transport/http"
 	"github.com/nicklaw5/helix/v2"
@@ -88,7 +89,20 @@ func main() {
 		client:             client,
 		notificationClient: notifier,
 		mutex:              &sync.Mutex{},
+		reconcileInactive:  os.Getenv("SS_RECONCILE_INACTIVE") == "true",
 	}
+
+	reconcileInterval := defaultReconcileInterval
+	if v := os.Getenv("SS_RECONCILE_INTERVAL"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d < time.Minute {
+			log.Fatalf("error: invalid SS_RECONCILE_INTERVAL %q (want a duration >= 1m, e.g. 15m)", v)
+		}
+		reconcileInterval = d
+	}
+	repo.startWorker()
+	repo.startReconciler(reconcileInterval)
+	log.Printf("reconciling live status every %s (inactive streamers: %v)", reconcileInterval, repo.reconcileInactive)
 	port := ":8080"
 	// Google Cloud Run defaults to 8080. Their platform
 	// sets the $PORT ENV var if you override it with, e.g.:

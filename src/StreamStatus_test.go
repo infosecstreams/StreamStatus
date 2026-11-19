@@ -344,6 +344,7 @@ func TestEventsubStatusSerializesConcurrentEvents(t *testing.T) {
 		mutex:              &sync.Mutex{},
 		notificationClient: notify.New(),
 	}
+	s.startWorker()
 
 	offlineBody := func(streamer string) string {
 		return `{"subscription":{"type":"stream.offline"},"event":{"broadcaster_user_name":"` + streamer + `","broadcaster_user_id":"1"}}`
@@ -360,6 +361,7 @@ func TestEventsubStatusSerializesConcurrentEvents(t *testing.T) {
 		}(i, streamer)
 	}
 	wg.Wait()
+	s.waitIdle()
 
 	// alpha's offline event must have landed on origin/main.
 	gotIndex := gitOutput(t, origin, "show", "main:index.md")

@@ -1,0 +1,175 @@
+package main
+
+import (
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/nicklaw5/helix/v2"
+	log "github.com/sirupsen/logrus"
+)
+
+// defaultReconcileInterval is how often the bot re-checks every streamer's
+// live state against Helix, to recover from EventSub deliveries that never
+// arrived.
+const defaultReconcileInterval = 15 * time.Minute
+
+// helixLoginBatch is the max number of user_login values per /streams call.
+const helixLoginBatch = 100
+
+// statusChange is a correction reconciliation wants to make.
+type statusChange struct {
+	name   string
+	online bool
+	stream helix.Stream
+}
+
+// startReconciler queues a reconciliation now and then every interval.
+func (s *StreamersRepo) startReconciler(interval time.Duration) {
+	s.enqueue(statusJob{kind: jobReconcile})
+	go func() {
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for range t.C {
+			if !s.enqueue(statusJob{kind: jobReconcile}) {
+				log.Warn("reconcile skipped: event queue full")
+			}
+		}
+	}()
+}
+
+// reconcile compares the site's 🟢 markers with what Helix says is live and
+// corrects mismatches through the normal update/commit/push path. Callers
+// must hold s.mutex (the worker does).
+func (s *StreamersRepo) reconcile() {
+	log.Info("reconcile: starting")
+	if err := s.getRepo(); err != nil {
+		log.Errorf("reconcile: syncing repo failed, skipping: %s", err)
+		return
+	}
+	if err := s.readFile(); err != nil {
+		log.Errorf("reconcile: reading markdown failed, skipping: %s", err)
+		return
+	}
+	active, err := csvNames(s.activeCsvPath)
+	if err != nil {
+		log.Errorf("reconcile: reading %s failed, skipping: %s", s.activeCsvPath, err)
+		return
+	}
+	var inactive []string
+	if s.reconcileInactive && s.inactiveCsvPath != "" {
+		inactive, err = csvNames(s.inactiveCsvPath)
+		if err != nil {
+			log.Errorf("reconcile: reading %s failed, ignoring inactive streamers: %s", s.inactiveCsvPath, err)
+			inactive = nil
+		}
+	}
+
+	live, err := s.fetchLiveByLogin(append(append([]string{}, active...), inactive...))
+	if err != nil {
+		// Acting on a partial answer would mark live streamers offline.
+		log.Errorf("reconcile: querying Helix failed, skipping: %s", err)
+		return
+	}
+
+	changes := diffLiveState(active, inactive, onlineStreamers(s.indexMdText), live)
+	log.Infof("reconcile: %d active, %d inactive checked, %d live, %d corrections", len(active), len(inactive), len(live), len(changes))
+	for _, c := range changes {
+		log.Warnf("reconcile: correcting %s to online=%v", c.name, c.online)
+		s.applyStatus(c.name, c.online, c.stream.GameName, c.stream.Language, c.stream.Tags)
+	}
+}
+
+// diffLiveState returns the corrections needed so the site matches Helix.
+// An active streamer should be 🟢 exactly when they are live in one of
+// VALID_GAMES (the same rule the event handlers use). An inactive streamer
+// who is live in VALID_GAMES is reactivated. live is keyed by lowercased
+// login; onlineNow by lowercased name.
+func diffLiveState(active, inactive []string, onlineNow map[string]bool, live map[string]helix.Stream) []statusChange {
+	var changes []statusChange
+	for _, name := range active {
+		key := strings.ToLower(name)
+		stream, isLive := live[key]
+		want := isLive && contains(VALID_GAMES, stream.GameName)
+		if want == onlineNow[key] {
+			continue
+		}
+		c := statusChange{name: name, online: want}
+		if want {
+			c.stream = stream
+			if stream.UserName != "" {
+				c.name = stream.UserName
+			}
+		}
+		changes = append(changes, c)
+	}
+	for _, name := range inactive {
+		stream, isLive := live[strings.ToLower(name)]
+		if !isLive || !contains(VALID_GAMES, stream.GameName) {
+			continue
+		}
+		c := statusChange{name: name, online: true, stream: stream}
+		if stream.UserName != "" {
+			c.name = stream.UserName
+		}
+		changes = append(changes, c)
+	}
+	return changes
+}
+
+// onlineStreamers returns the lowercased names of streamers marked 🟢 in
+// index.md.
+func onlineStreamers(indexMd string) map[string]bool {
+	online := map[string]bool{}
+	for _, line := range strings.Split(indexMd, "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(line), "🟢") {
+			continue
+		}
+		parts := strings.SplitN(line, "`", 3)
+		if len(parts) == 3 && parts[1] != "" {
+			online[strings.ToLower(parts[1])] = true
+		}
+	}
+	return online
+}
+
+// fetchLiveByLogin returns the live streams among logins, keyed by
+// lowercased login. Any failed batch fails the whole call.
+func (s *StreamersRepo) fetchLiveByLogin(logins []string) (map[string]helix.Stream, error) {
+	live := map[string]helix.Stream{}
+	for start := 0; start < len(logins); start += helixLoginBatch {
+		end := start + helixLoginBatch
+		if end > len(logins) {
+			end = len(logins)
+		}
+		resp, err := s.client.GetStreams(&helix.StreamsParams{
+			UserLogins: logins[start:end],
+			First:      helixLoginBatch,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if resp.ErrorStatus != 0 {
+			return nil, fmt.Errorf("helix /streams status=%d %s: %s", resp.ErrorStatus, resp.Error, resp.ErrorMessage)
+		}
+		for _, st := range resp.Data.Streams {
+			live[strings.ToLower(st.UserLogin)] = st
+		}
+	}
+	return live, nil
+}
+
+// csvNames returns the streamer names (first column) from a streamers CSV.
+func csvNames(path string) ([]string, error) {
+	lines, err := readCSVLines(path)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(lines))
+	for _, l := range lines {
+		if n := csvName(l); n != "" {
+			names = append(names, n)
+		}
+	}
+	return names, nil
+}

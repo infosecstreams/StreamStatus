@@ -110,6 +110,10 @@ export TW_CLIENT_SECRET=client_secret
 export SS_PUSHBULLET_APIKEY=myAPIkey
 # Pushbullet devices (comma separated) to send notifications to
 export SS_PUSHBULLET_DEVICES=myDevice,anotherDevice
+# Optional: how often to re-check every streamer's live state against Helix (default 15m)
+export SS_RECONCILE_INTERVAL=15m
+# Optional: let reconciliation reactivate live streamers from inactive_streamers.csv (default false)
+export SS_RECONCILE_INACTIVE=false
 
 # Run:
 ./StreamStatus
