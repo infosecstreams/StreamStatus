@@ -1,0 +1,65 @@
+name: Test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  # Called by build-and-push.yml so nothing is released without passing.
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Each new push to a PR cancels its stale run; release calls are never cancelled.
+  group: test-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: src
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: src/go.mod
+          # Dependencies are vendored; there is no module cache to restore.
+          cache: false
+
+      # The git-fixture tests shell out to the git CLI (preinstalled on the runner).
+      - name: Show toolchain
+        run: go version && git --version
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test -race
+        run: go test -race ./...
+
+      - name: govulncheck
+        # Pinned version; the Go checksum database verifies the download.
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...
+
+  deploy-script:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: shellcheck
+        run: shellcheck deploy/deploy-streamstatus deploy/install-cosign.sh deploy/test/run.sh deploy/test/fake-*
+
+      - name: deploy-streamstatus tests
+        run: deploy/test/run.sh
