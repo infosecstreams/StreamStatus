@@ -320,3 +320,28 @@ func TestLiveTrackers(t *testing.T) {
 		}
 	}
 }
+
+// bot-live-data imports stream_history.json into its database (backfill.go
+// there reads only "streams": {id: [{start, length (ns)}]}). Keep this
+// format until that import has run in production.
+func TestStreamHistoryFileFormatIsStable(t *testing.T) {
+	h := newStreamHistory()
+	h.path = filepath.Join(t.TempDir(), "stream_history.json")
+	h.streams["42"] = []pastStream{{Start: time.Date(2026, 10, 22, 3, 48, 0, 0, time.UTC), Length: 177 * time.Minute}}
+	h.fetchedAt["42"] = schedNow
+	h.save()
+	b, err := os.ReadFile(h.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var f struct {
+		Streams map[string][]map[string]any `json:"streams"`
+	}
+	if err := json.Unmarshal(b, &f); err != nil {
+		t.Fatal(err)
+	}
+	s := f.Streams["42"]
+	if len(s) != 1 || s[0]["start"] != "2026-10-22T03:48:00Z" || s[0]["length"] != float64(177*time.Minute) || len(s[0]) != 2 {
+		t.Errorf("format changed: %s", b)
+	}
+}
