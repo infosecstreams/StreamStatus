@@ -31,7 +31,7 @@ func newAPIRepo(t *testing.T) (*StreamersRepo, *http.ServeMux) {
 	return s, mux
 }
 
-func get(mux http.Handler, method, path string, hdr map[string]string) *httptest.ResponseRecorder {
+func apiGet(mux http.Handler, method, path string, hdr map[string]string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(method, path, nil)
 	for k, v := range hdr {
 		req.Header.Set(k, v)
@@ -55,7 +55,7 @@ func TestStatusJSONShapeAndHeaders(t *testing.T) {
 	s.live.snap.Store(nil)
 	s.live.rebuild(t0)
 
-	rec := get(mux, "GET", "/api/status.json", nil)
+	rec := apiGet(mux, "GET", "/api/status.json", nil)
 	if rec.Code != 200 {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
 	}
@@ -104,8 +104,8 @@ func TestStatusJSONShapeAndHeaders(t *testing.T) {
 
 func TestStatusJSONGzipAndConditional(t *testing.T) {
 	_, mux := newAPIRepo(t)
-	plain := get(mux, "GET", "/api/status.json", nil)
-	zipped := get(mux, "GET", "/api/status.json", map[string]string{"Accept-Encoding": "br, gzip;q=0.8"})
+	plain := apiGet(mux, "GET", "/api/status.json", nil)
+	zipped := apiGet(mux, "GET", "/api/status.json", map[string]string{"Accept-Encoding": "br, gzip;q=0.8"})
 	if zipped.Header().Get("Content-Encoding") != "gzip" {
 		t.Fatal("gzip not used")
 	}
@@ -123,7 +123,7 @@ func TestStatusJSONGzipAndConditional(t *testing.T) {
 	}
 
 	for _, inm := range []string{et, etgz, "W/" + etgz, `"nope", ` + et, "*"} {
-		rec := get(mux, "GET", "/api/status.json", map[string]string{"If-None-Match": inm, "Accept-Encoding": "gzip"})
+		rec := apiGet(mux, "GET", "/api/status.json", map[string]string{"If-None-Match": inm, "Accept-Encoding": "gzip"})
 		if rec.Code != http.StatusNotModified || rec.Body.Len() != 0 || rec.Header().Get("ETag") != etgz {
 			t.Errorf("If-None-Match %s: code %d, etag %q", inm, rec.Code, rec.Header().Get("ETag"))
 		}
@@ -131,25 +131,25 @@ func TestStatusJSONGzipAndConditional(t *testing.T) {
 			t.Errorf("304 lacks CORS/cache headers: %v", rec.Header())
 		}
 	}
-	if rec := get(mux, "GET", "/api/status.json", map[string]string{"If-None-Match": `"other"`}); rec.Code != 200 {
+	if rec := apiGet(mux, "GET", "/api/status.json", map[string]string{"If-None-Match": `"other"`}); rec.Code != 200 {
 		t.Errorf("non-matching If-None-Match: %d", rec.Code)
 	}
-	if rec := get(mux, "GET", "/api/status.json", map[string]string{"Accept-Encoding": "gzip;q=0"}); rec.Header().Get("Content-Encoding") != "" {
+	if rec := apiGet(mux, "GET", "/api/status.json", map[string]string{"Accept-Encoding": "gzip;q=0"}); rec.Header().Get("Content-Encoding") != "" {
 		t.Error("gzip used despite q=0")
 	}
 
-	head := get(mux, "HEAD", "/api/status.json", nil)
+	head := apiGet(mux, "HEAD", "/api/status.json", nil)
 	if head.Code != 200 || head.Body.Len() != 0 || head.Header().Get("Content-Length") != plain.Header().Get("Content-Length") {
 		t.Errorf("HEAD: %d len %d", head.Code, head.Body.Len())
 	}
-	opt := get(mux, "OPTIONS", "/api/status.json", nil)
+	opt := apiGet(mux, "OPTIONS", "/api/status.json", nil)
 	if opt.Code != http.StatusNoContent || opt.Header().Get("Access-Control-Allow-Origin") != "*" {
 		t.Errorf("OPTIONS: %d %v", opt.Code, opt.Header())
 	}
-	if rec := get(mux, "POST", "/api/status.json", nil); rec.Code != http.StatusMethodNotAllowed {
+	if rec := apiGet(mux, "POST", "/api/status.json", nil); rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("POST: %d", rec.Code)
 	}
-	if rec := get(mux, "GET", "/api/nope.json", nil); rec.Code != 404 || rec.Header().Get("Access-Control-Allow-Origin") != "*" {
+	if rec := apiGet(mux, "GET", "/api/nope.json", nil); rec.Code != 404 || rec.Header().Get("Access-Control-Allow-Origin") != "*" {
 		t.Errorf("unknown path: %d", rec.Code)
 	}
 }
@@ -158,14 +158,14 @@ func TestStatusJSONGzipAndConditional(t *testing.T) {
 // make a new version.
 func TestSnapshotOnlyChangesWithContent(t *testing.T) {
 	s, mux := newAPIRepo(t)
-	first := get(mux, "GET", "/api/status.json", nil).Header().Get("ETag")
+	first := apiGet(mux, "GET", "/api/status.json", nil).Header().Get("ETag")
 	s.live.rebuild(t0.Add(time.Second))
-	if got := get(mux, "GET", "/api/status.json", nil).Header().Get("ETag"); got != first {
+	if got := apiGet(mux, "GET", "/api/status.json", nil).Header().Get("ETag"); got != first {
 		t.Error("ETag changed without a content change")
 	}
 	s.live.online("1", helix.Stream{UserID: "1", UserLogin: "alpha", GameName: "Just Chatting", ViewerCount: 9, StartedAt: t0.Add(-time.Hour)}, t0.Add(time.Minute))
 	s.live.rebuild(t0.Add(time.Minute))
-	rec := get(mux, "GET", "/api/status.json", nil)
+	rec := apiGet(mux, "GET", "/api/status.json", nil)
 	if rec.Header().Get("ETag") == first || !strings.Contains(rec.Body.String(), `"viewers":9`) {
 		t.Errorf("new viewer count not published: %s", rec.Body)
 	}
@@ -177,7 +177,7 @@ func TestStatusHandlerDoesNotTakeWorkerMutex(t *testing.T) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 	done := make(chan int)
-	go func() { done <- get(mux, "GET", "/api/status.json", nil).Code }()
+	go func() { done <- apiGet(mux, "GET", "/api/status.json", nil).Code }()
 	select {
 	case code := <-done:
 		if code != 200 {
@@ -192,13 +192,13 @@ func TestStatusBeforeFirstSnapshot(t *testing.T) {
 	s := &StreamersRepo{mutex: &sync.Mutex{}, live: newTestLive(t, "")}
 	mux := http.NewServeMux()
 	s.registerAPI(mux)
-	rec := get(mux, "GET", "/api/status.json", nil)
+	rec := apiGet(mux, "GET", "/api/status.json", nil)
 	if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Cache-Control") != "no-store" || rec.Header().Get("Access-Control-Allow-Origin") != "*" {
 		t.Errorf("before roster: %d %v", rec.Code, rec.Header())
 	}
 	// Live state off entirely (no database).
 	s.live = nil
-	if rec := get(mux, "GET", "/api/status.json", nil); rec.Code != http.StatusServiceUnavailable {
+	if rec := apiGet(mux, "GET", "/api/status.json", nil); rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("without live state: %d", rec.Code)
 	}
 }
