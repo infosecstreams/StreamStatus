@@ -1,0 +1,68 @@
+# A job to add to .github/workflows/site-astro.yaml in infosecstreams.github.io,
+# next to the existing `deploy` (GitHub Pages) job. It reuses the `build`
+# job's Pages artifact (a tar of site/dist), so both hosts get the same bytes.
+# The job is gated by the repository variable SITE_HOST:
+#   SITE_HOST=pages       → only the GitHub Pages job deploys (today)
+#   SITE_HOST=cloudflare  → only this job deploys
+#   SITE_HOST=both        → both deploy (use this during migration, so rolling
+#                           back is a DNS change only)
+# The existing deploy job's `if:` becomes:
+#   if: github.ref == 'refs/heads/main' && vars.ASTRO_PAGES == 'true' && vars.SITE_HOST != 'cloudflare'
+#
+# Secrets go in the `cloudflare` environment (Settings → Environments), with a
+# deployment branch rule that allows `main` only:
+#   CLOUDFLARE_API_TOKEN   custom token: Account → Workers Scripts: Edit;
+#                          Zone (infosecstreams.com) → Workers Routes: Edit.
+#                          Nothing else.
+#   CLOUDFLARE_ACCOUNT_ID  (can be a variable instead; it is not secret)
+#
+# Requires site/wrangler.jsonc and site/public/_headers (from deploy/edge/site/
+# in StreamStatus's infra-edge branch).
+
+  deploy-cloudflare:
+    needs: build
+    if: github.ref == 'refs/heads/main' && (vars.SITE_HOST == 'cloudflare' || vars.SITE_HOST == 'both')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    environment:
+      name: cloudflare
+      url: https://infosecstreams.com
+    concurrency:
+      group: deploy-cloudflare
+      cancel-in-progress: false
+    steps:
+      - name: Checkout (for wrangler.jsonc only)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          sparse-checkout: site/wrangler.jsonc
+          sparse-checkout-cone-mode: false
+
+      - name: Download the built site
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: github-pages
+          path: ${{ runner.temp }}/pages
+
+      - name: Unpack into site/dist
+        run: |
+          mkdir -p site/dist
+          tar -xf "$RUNNER_TEMP/pages/artifact.tar" -C site/dist
+          test -f site/dist/index.html
+          test -f site/dist/_headers
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - name: Deploy to Cloudflare (Workers static assets)
+        working-directory: site
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        # Pinned wrangler version; no project dependencies are installed in
+        # this job, so the token is never exposed to the site's npm tree.
+        run: npx --yes wrangler@4.165.0 deploy --message "${GITHUB_SHA::12}"

@@ -1,0 +1,174 @@
+# measure.sh output, 2026-11-19, from Rocklin CA (Comcast), curl 8.18.0/OpenSSL 3.5.5.
+# Note: time_* values are cumulative from request start and include this client's ~150 ms CA-store load, so compare TTFB between sites, not against RTT. HTTP/3 probe: ymuski/curl-http3 (quiche).
+# RTT (ping): infosecstreams.com 31 ms, p.infosecstreams.com 50 ms (us-west-2), www.mcmaster.com 52 ms.
+================ https://infosecstreams.com/
+--- TLS
+tls1_3: TLSv1.3 TLS_AES_128_GCM_SHA256 ocsp=none
+tls1_2: TLSv1.2 ECDHE-RSA-CHACHA20-POLY1305 ocsp=none
+issuer=C=US, O=Let's Encrypt, CN=YR2
+notAfter=Jan 25 13:54:50 2027 GMT
+X509v3 Subject Alternative Name: 
+ DNS:infosecstreams.com, DNS:www.infosecstreams.com
+resume/0-RTT: Reused, TLSv1.3, Cipher is TLS_AES_128_GCM_SHA256     Max Early Data: 0 
+--- headers (h2, Accept-Encoding: br, zstd, gzip)
+HTTP/2 200 
+server: GitHub.com
+content-type: text/html; charset=utf-8
+last-modified: Thu, 19 Nov 2026 21:31:12 GMT
+access-control-allow-origin: *
+etag: W/"6aff6aa0-7c23"
+expires: Thu, 19 Nov 2026 21:48:23 GMT
+cache-control: max-age=600
+content-encoding: gzip
+age: 520
+via: 1.1 varnish
+x-served-by: cache-sjc1000088-SJC
+x-cache: HIT
+x-cache-hits: 0
+vary: Accept-Encoding
+content-length: 6405
+--- compression offered (bytes on the wire)
+identity: 31779 B, content-encoding=
+gzip: 6405 B, content-encoding=gzip
+br: 31779 B, content-encoding=
+zstd: 31779 B, content-encoding=
+--- 103 Early Hints
+none
+--- HTTP/3
+h3: 0 000 ttfb=0.000000s
+--- timing over 5 cold connections (h2): dns connect tls ttfb total, seconds
+avg dns=0.049 connect=0.082 tls=0.398 ttfb=0.466 (min 0.217 max 0.545) total=0.468
+--- revalidation (If-None-Match / If-Modified-Since)
+If-None-Match -> 304
+================ https://p.infosecstreams.com/
+--- TLS
+tls1_3: TLSv1.3  ocsp=none
+tls1_2: TLSv1.2 ECDHE-RSA-AES256-GCM-SHA384 ocsp=none
+issuer=C=US, O=Let's Encrypt, CN=YR2
+notAfter=Jan 19 06:17:05 2027 GMT
+X509v3 Subject Alternative Name: 
+ DNS:p.infosecstreams.com
+resume/0-RTT: n/a
+--- headers (h2, Accept-Encoding: br, zstd, gzip)
+HTTP/2 200 
+server: nginx/1.31.9
+content-type: text/html; charset=utf-8
+content-length: 15695
+access-control-allow-origin: *
+cache-control: max-age=0, private, must-revalidate
+content-security-policy: base-uri 'self'; frame-ancestors 'self';
+referrer-policy: strict-origin-when-cross-origin
+x-content-type-options: nosniff
+strict-transport-security: max-age=63072000
+--- compression offered (bytes on the wire)
+identity: 15695 B, content-encoding=
+gzip: 15695 B, content-encoding=
+br: 15695 B, content-encoding=
+zstd: 15695 B, content-encoding=
+--- 103 Early Hints
+none
+--- HTTP/3
+curl: (28) Connection timed out after 9999 milliseconds
+--- timing over 5 cold connections (h2): dns connect tls ttfb total, seconds
+avg dns=0.039 connect=0.090 tls=0.364 ttfb=0.534 (min 0.333 max 0.688) total=0.535
+--- revalidation (If-None-Match / If-Modified-Since)
+no ETag
+================ https://p.infosecstreams.com/js/script.js
+--- TLS
+tls1_3: TLSv1.3  ocsp=none
+tls1_2: TLSv1.2 ECDHE-RSA-AES256-GCM-SHA384 ocsp=none
+issuer=C=US, O=Let's Encrypt, CN=YR2
+notAfter=Jan 19 06:17:05 2027 GMT
+X509v3 Subject Alternative Name: 
+ DNS:p.infosecstreams.com
+resume/0-RTT: n/a
+--- headers (h2, Accept-Encoding: br, zstd, gzip)
+HTTP/2 200 
+server: nginx/1.31.9
+content-type: application/javascript
+content-length: 3005
+access-control-allow-origin: *
+cache-control: public, max-age=86400, must-revalidate
+cross-origin-resource-policy: cross-origin
+x-content-type-options: nosniff
+strict-transport-security: max-age=63072000
+--- compression offered (bytes on the wire)
+identity: 3005 B, content-encoding=
+gzip: 3005 B, content-encoding=
+br: 3005 B, content-encoding=
+zstd: 3005 B, content-encoding=
+--- 103 Early Hints
+none
+--- HTTP/3
+curl: (28) Connection timed out after 10000 milliseconds
+--- timing over 5 cold connections (h2): dns connect tls ttfb total, seconds
+avg dns=0.034 connect=0.091 tls=0.254 ttfb=0.361 (min 0.290 max 0.613) total=0.361
+--- revalidation (If-None-Match / If-Modified-Since)
+no ETag
+================ https://p.infosecstreams.com/api/status.json
+--- TLS
+tls1_3: TLSv1.3  ocsp=none
+tls1_2: TLSv1.2 ECDHE-RSA-AES256-GCM-SHA384 ocsp=none
+issuer=C=US, O=Let's Encrypt, CN=YR2
+notAfter=Jan 19 06:17:05 2027 GMT
+X509v3 Subject Alternative Name: 
+ DNS:p.infosecstreams.com
+resume/0-RTT: n/a
+--- headers (h2, Accept-Encoding: br, zstd, gzip)
+HTTP/2 404 
+server: nginx/1.31.9
+content-type: text/html; charset=utf-8
+content-length: 16090
+access-control-allow-origin: *
+cache-control: max-age=0, private, must-revalidate
+content-security-policy: base-uri 'self'; frame-ancestors 'self';
+referrer-policy: strict-origin-when-cross-origin
+x-content-type-options: nosniff
+strict-transport-security: max-age=63072000
+--- compression offered (bytes on the wire)
+identity: 16090 B, content-encoding=
+gzip: 16090 B, content-encoding=
+br: 16090 B, content-encoding=
+zstd: 16090 B, content-encoding=
+--- 103 Early Hints
+none
+--- HTTP/3
+h3: 0 000 ttfb=0.000000s
+--- timing over 5 cold connections (h2): dns connect tls ttfb total, seconds
+avg dns=0.062 connect=0.111 tls=0.356 ttfb=0.481 (min 0.292 max 0.735) total=0.550
+--- revalidation (If-None-Match / If-Modified-Since)
+no ETag
+
+################ reference: www.mcmaster.com
+================ https://www.mcmaster.com/
+--- TLS
+tls1_3: TLSv1.3  ocsp=none
+tls1_2: TLSv1.2 ECDHE-RSA-AES256-GCM-SHA384 ocsp=stapled
+issuer=C=US, O=DigiCert Inc, CN=DigiCert EV RSA CA G2
+notAfter=May 23 23:59:59 2027 GMT
+X509v3 Subject Alternative Name: 
+ DNS:www.mcmaster.com, DNS:auth.mcmaster.com, DNS:authqual.mcmaster.com, DNS:eprocurement.mcmaster.com, DNS:eprocurementqual.mcmaster.com, DNS:images1.mcmaster.com, DNS:images1qual.mcmaster.com, DNS:images2.mcmaster.com, DNS:images2qual.mcmaster.com, DNS:mcmaster.com, DNS:memory.mcmaster.com, DNS:memoryqual.mcmaster.com, DNS:www2.mcmaster.com, DNS:www2qual.mcmaster.com, DNS:www3.mcmaster.com, DNS:www3qual.mcmaster.com, DNS:www4.mcmaster.com, DNS:www4qual.mcmaster.com, DNS:www5.mcmaster.com, DNS:www5qual.mcmaster.com, DNS:wwwqual.mcmaster.com
+resume/0-RTT: n/a
+--- headers (h2, Accept-Encoding: br, zstd, gzip)
+HTTP/2 200 
+cache-control: no-cache
+content-type: text/html; charset=utf-8
+content-encoding: br
+expires: -1
+vary: Accept-Encoding
+permissions-policy: interest-cohort=()
+content-length: 14631
+x-cache: TCP_REFRESH_MISS from a23-213-247-113.deploy.akamaitechnologies.com (AkamaiGHost/22.7.1-a99db5fb656d033f98675045e2711319) (S)
+x-cache-remote: TCP_MEM_HIT from a23-66-234-24.deploy.akamaitechnologies.com (AkamaiGHost/22.7.1-a99db5fb656d033f98675045e2711319) (-)
+--- compression offered (bytes on the wire)
+identity: 81920 B, content-encoding=
+gzip: 15255 B, content-encoding=gzip
+br: 81920 B, content-encoding=
+zstd: 81920 B, content-encoding=
+--- 103 Early Hints
+none
+--- HTTP/3
+--- timing over 5 cold connections (h2): dns connect tls ttfb total, seconds
+avg dns=0.042 connect=0.082 tls=0.416 ttfb=0.521 (min 0.278 max 0.659) total=0.527
+--- revalidation (If-None-Match / If-Modified-Since)
+no ETag

@@ -1,0 +1,23 @@
+# Add this ingress block to aws_security_group.iss-sg in
+# ~/repos/iss/terraform-iss/vpc.tf (the security group is managed inline
+# there, so adding a separate aws_security_group_rule would fight it).
+# Then: terraform plan -target=aws_security_group.iss-sg ; terraform apply.
+#
+# Console equivalent: EC2 → Security groups → iss-sg → Edit inbound rules →
+# Add rule: Custom UDP, port 443, source 0.0.0.0/0, "Allow HTTP/3 (QUIC) to Caddy".
+#
+# Rollback: remove the block and apply again. Browsers fall back to HTTP/2 over TCP.
+
+    {
+      cidr_blocks = [
+        "0.0.0.0/0",
+      ]
+      description      = "Allow HTTP/3 (QUIC) to Caddy"
+      from_port        = 443
+      protocol         = "udp"
+      self             = false
+      to_port          = 443
+      ipv6_cidr_blocks = []
+      prefix_list_ids  = []
+      security_groups  = []
+    },

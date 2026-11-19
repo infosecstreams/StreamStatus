@@ -1,0 +1,12 @@
+# Cold-connection medians (7 runs each), one client for all sites: ymuski/curl-http3 (curl 8.2.1, BoringSSL, quiche) in docker,
+# from Rocklin CA, 2026-11-19. connect includes the container's uncached DNS lookup. 'unsupported' = no QUIC answer.
+https://infosecstreams.com/                   --http2       n=7 median connect=101ms tls_done=140ms ttfb=209ms
+https://infosecstreams.com/ --http3-only unsupported
+https://p.infosecstreams.com/js/script.js     --http2       n=7 median connect= 98ms tls_done=166ms ttfb=271ms
+https://p.infosecstreams.com/js/script.js --http3-only unsupported
+https://www.mcmaster.com/                     --http2       n=7 median connect= 76ms tls_done=162ms ttfb=265ms
+https://www.mcmaster.com/ --http3-only unsupported
+https://developers.cloudflare.com/            --http2       n=7 median connect= 69ms tls_done=113ms ttfb=244ms
+https://developers.cloudflare.com/            --http3-only  n=7 median connect=  0ms tls_done= 86ms ttfb=183ms
+https://www.netlify.com/                      --http2       n=7 median connect= 77ms tls_done=110ms ttfb=190ms
+https://www.netlify.com/ --http3-only unsupported

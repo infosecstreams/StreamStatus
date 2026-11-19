@@ -1,0 +1,56 @@
+# Response headers for the Astro site on Cloudflare Workers static assets.
+# Copy to site/public/_headers in infosecstreams.github.io (Astro copies
+# public/ into dist/). Syntax: https://developers.cloudflare.com/workers/static-assets/headers/
+# Rules stack: a path gets the headers of every rule it matches.
+#
+# Cache policy:
+# - HTML: Cloudflare's default for assets is `public, max-age=0, must-revalidate`
+#   plus an ETag. Every deploy is atomic and live everywhere at once, so there
+#   is no purge step and no stale-HTML window. Browsers revalidate (a ~200 B 304
+#   from the nearest PoP), and the site's service worker serves the cached copy
+#   first anyway.
+# - /_astro/*: content-hashed, so cache for a year, immutable.
+# - /sw.js: always revalidate, so a deploy reaches the service worker at once.
+
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Strict-Transport-Security: max-age=31536000
+  Cross-Origin-Opener-Policy: same-origin
+  Permissions-Policy: browsing-topics=(), interest-cohort=(), camera=(), microphone=(), geolocation=()
+  # The parts of the CSP that a <meta> tag cannot carry. script-src/style-src
+  # belong in a <meta http-equiv="Content-Security-Policy"> that Astro builds
+  # with hashes of the inline scripts (see README "Site CSP").
+  Content-Security-Policy: frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'none'
+  # Cloudflare sends preconnect/preload Link headers early as 103 Early Hints
+  # (zone setting Speed → Early Hints). Open the API/analytics connection while
+  # the HTML is still on its way.
+  Link: <https://p.infosecstreams.com>; rel=preconnect; crossorigin
+
+# Pages that read live status: preload it too (it matches the <link rel=preload>
+# in the HTML, so the browser reuses one request).
+/
+  Link: <https://p.infosecstreams.com/api/status.json>; rel=preload; as=fetch; crossorigin
+/inactive
+  Link: <https://p.infosecstreams.com/api/status.json>; rel=preload; as=fetch; crossorigin
+/:lang/
+  Link: <https://p.infosecstreams.com/api/status.json>; rel=preload; as=fetch; crossorigin
+/:lang/inactive
+  Link: <https://p.infosecstreams.com/api/status.json>; rel=preload; as=fetch; crossorigin
+
+/_astro/*
+  ! Link
+  Cache-Control: public, max-age=31536000, immutable
+
+/sw.js
+  ! Link
+  Cache-Control: no-cache
+  # A service worker's fetches are governed by the CSP of its own script.
+  Content-Security-Policy: default-src 'self'; connect-src 'self'; script-src 'self'
+
+/favicon.*
+  ! Link
+  Cache-Control: public, max-age=86400, stale-while-revalidate=604800
+/og.png
+  ! Link
+  Cache-Control: public, max-age=86400, stale-while-revalidate=604800
