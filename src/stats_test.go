@@ -14,7 +14,7 @@ import (
 // statsNow is a Monday.
 var statsNow = time.Date(2026, 11, 30, 12, 0, 0, 0, time.UTC)
 
-func at(s string) time.Time {
+func utcAt(s string) time.Time {
 	t, err := time.Parse("2006-01-02 15:04", s)
 	if err != nil {
 		panic(err)
@@ -31,27 +31,27 @@ func at(s string) time.Time {
 func seedStatsHistory(t *testing.T, st *store) {
 	t.Helper()
 	stream := func(start, end string, cat string, viewers int) {
-		mustSeen(t, st, "1", at(start), cat, at(start))
-		st.addViewerSample("1", at(start), viewers, cat)
-		st.streamEnded("1", at(end))
+		mustSeen(t, st, "1", utcAt(start), cat, utcAt(start))
+		st.addViewerSample("1", utcAt(start), viewers, cat)
+		st.streamEnded("1", utcAt(end))
 	}
 	stream("2026-10-01 18:00", "2026-10-01 22:00", "Science & Technology", 5)
 	stream("2026-10-06 18:00", "2026-10-06 19:00", "Science & Technology", 5)
 
-	mustSeen(t, st, "1", at("2026-11-23 18:00"), "Science & Technology", at("2026-11-23 18:00"))
-	st.addViewerSample("1", at("2026-11-23 18:00"), 10, "Science & Technology")
-	st.addViewerSample("1", at("2026-11-23 19:00"), 30, "Science & Technology")
-	st.categoryChanged("1", "Minecraft", at("2026-11-23 20:00"))
-	st.addViewerSample("1", at("2026-11-23 20:00"), 100, "Minecraft")
-	st.streamEnded("1", at("2026-11-23 21:00"))
+	mustSeen(t, st, "1", utcAt("2026-11-23 18:00"), "Science & Technology", utcAt("2026-11-23 18:00"))
+	st.addViewerSample("1", utcAt("2026-11-23 18:00"), 10, "Science & Technology")
+	st.addViewerSample("1", utcAt("2026-11-23 19:00"), 30, "Science & Technology")
+	st.categoryChanged("1", "Minecraft", utcAt("2026-11-23 20:00"))
+	st.addViewerSample("1", utcAt("2026-11-23 20:00"), 100, "Minecraft")
+	st.streamEnded("1", utcAt("2026-11-23 21:00"))
 
 	stream("2026-11-25 18:00", "2026-11-25 19:00", "Just Chatting", 20)
 
 	for d, n := range map[string]int{"2026-10-30": 880, "2026-11-01": 900, "2026-11-23": 950, "2026-11-30": 1000} {
-		st.setFollowers("1", at(d+" 06:00"), n)
+		st.setFollowers("1", utcAt(d+" 06:00"), n)
 	}
-	st.addTitle("1", at("2026-11-23 17:55"), "Reversing malware", "Science & Technology")
-	st.addTitle("1", at("2026-11-25 17:59"), "Q&A", "Just Chatting")
+	st.addTitle("1", utcAt("2026-11-23 17:55"), "Reversing malware", "Science & Technology")
+	st.addTitle("1", utcAt("2026-11-25 17:59"), "Q&A", "Just Chatting")
 }
 
 func TestComputeStreamerStats(t *testing.T) {
@@ -184,13 +184,13 @@ func TestStreaks(t *testing.T) {
 }
 
 func TestWeekIndexStartsMonday(t *testing.T) {
-	if weekIndex(at("2026-11-29 23:59")) == weekIndex(at("2026-11-30 00:00")) {
+	if weekIndex(utcAt("2026-11-29 23:59")) == weekIndex(utcAt("2026-11-30 00:00")) {
 		t.Error("Sunday and Monday in the same week")
 	}
-	if weekIndex(at("2026-11-30 00:00")) != weekIndex(at("2026-12-06 23:59")) {
+	if weekIndex(utcAt("2026-11-30 00:00")) != weekIndex(utcAt("2026-12-06 23:59")) {
 		t.Error("Monday..Sunday split")
 	}
-	if weekday(at("2026-11-30 00:00")) != 0 || weekday(at("2026-11-29 00:00")) != 6 {
+	if weekday(utcAt("2026-11-30 00:00")) != 0 || weekday(utcAt("2026-11-29 00:00")) != 6 {
 		t.Error("weekday numbering")
 	}
 }
