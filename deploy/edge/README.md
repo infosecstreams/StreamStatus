@@ -9,12 +9,12 @@ is applied yet.
 |---|---|
 | `measure.sh` | Read-only before/after probe: TLS, ALPN, compression, cache headers, 103, HTTP/3, cold TTFB, 304s |
 | `measurements/` | The 2026-11-19 baseline (site, p. host, mcmaster.com and CDN references) |
-| `caddy/Caddyfile` | Caddy for p.infosecstreams.com: Plausible (incl. its `/api/*` and `/live/*`), `/webhook/callbacks`, the bot's `/streamstatus/*`, backspin on :8080 |
+| `caddy/Caddyfile` | Caddy for p.infosecstreams.com: Plausible (incl. its `/api/*` and `/live/*`), `/webhook/callbacks`, the bot's `/streamstatus/*` |
 | `caddy/site.caddy` | Option (a) only: the Astro site served from the box (precompressed br/zstd), tested |
 | `HOSTING-AND-COST.md` | Site hosting with GitHub Pages dropped, the box's cost and cheaper options, and the "newer than Caddy?" survey |
 | `docker-compose.caddy.yml` | The `caddy` service for the host's compose file |
 | `CUTOVER-caddy.md` | Cutover runbook: certificate obtained before switching, 2–4 s port hand-off, rollback |
-| `terraform/edge/` | **Terraform for the new stack**: Lightsail 2 GB box (bootstrap, static IP, firewall) and the Cloudflare zone; `RUNBOOK.md` = migration EC2 → Lightsail and DO → Cloudflare, incl. orphan-EBS checks |
+| `terraform/README.md` | Pointer: the Terraform for the new stack (Lightsail 2 GB + Cloudflare zone) and its migration runbook live in `terraform-iss/edge` (branch `infra-edge`, worktree `~/repos/worktrees/terraform-iss-edge`) |
 | `terraform/iss-sg-quic.tf.snippet` | Security group: UDP 443 for HTTP/3 (only if Caddy goes on the old EC2 box) |
 | `nginx-streamstatus-api.conf` | **Only if Caddy is not adopted:** `location /streamstatus/` for the deployed nginx config, replacing ci-deploy's `location /api/` |
 | `test/run.sh` | Local test of the Caddyfile against fake upstreams (32 checks, docker) |

@@ -24,9 +24,6 @@ services:
       - "80:80"
       - "443:443"
       - "443:443/udp"   # HTTP/3 (QUIC). The security group must allow UDP 443.
-      # backspin.highvibes.cloud: the Cloudflare Tunnel (cloudflared on the
-      # host) reaches it at http://127.0.0.1:8080, so loopback only.
-      - "127.0.0.1:8080:8080"
     environment:
       # ACME account contact. Optional; defaults to the security.txt address.
       ACME_EMAIL: security.txt@infosecstreams.com
@@ -37,7 +34,6 @@ services:
       # (the Let's Encrypt rate limit is 5 identical certs a week).
       - caddy-data:/data
       - caddy-config:/config
-      - /home/ec2-user/backspin:/srv/backspin:ro
       # Option (a) only (site served from this box, caddy/site.caddy):
       # - ./site:/srv/site:ro
     # Measured at ~27 MiB RSS idle in the local test; nginx was ~10 MiB.

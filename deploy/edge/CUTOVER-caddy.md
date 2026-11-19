@@ -101,7 +101,6 @@ t -o /dev/null -w '%{http_code} script.js %header{content-encoding}\n' -A Mozill
 t -o /dev/null -w '%{http_code} webhook GET (want 405)\n' https://p.infosecstreams.com/webhook/callbacks
 t -o /dev/null -w '%{http_code} plausible /api/health\n' -A Mozilla/5.0 https://p.infosecstreams.com/api/health
 t -o /dev/null -w '%{http_code} plausible LiveView longpoll (not 404 from the bot)\n' -A Mozilla/5.0 https://p.infosecstreams.com/live/longpoll
-t -o /dev/null -w '%{http_code} backspin\n' --resolve backspin.highvibes.cloud:8080:$ip http://backspin.highvibes.cloud:8080/
 # once the bot serves the API:
 t -D - -o /dev/null -H 'Accept-Encoding: gzip' https://p.infosecstreams.com/streamstatus/status.json
 ```

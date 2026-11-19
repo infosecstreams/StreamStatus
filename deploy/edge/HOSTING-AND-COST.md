@@ -73,7 +73,7 @@ its low-memory tips are in [ClickHouse usage tips](https://clickhouse.com/docs/o
 |---|---|---|
 | t3.small on-demand | $0.0208/h | $15.18 |
 | gp3 root 30 GiB | $0.08/GB-mo | $2.40 |
-| Second 30 GiB gp3 volume (`aws_ebs_volume.iss-prod` in terraform) | $0.08/GB-mo | $2.40 **if it exists**. It is **not attached** to the instance (lsblk shows only the root disk), so likely an orphan. Its snapshot (`aws_ebs_snapshot.iss-prod`) is of that never-written volume, so it stores almost nothing. Checks and deletion: `terraform/edge/RUNBOOK.md` phase 5a. |
+| Second 30 GiB gp3 volume (`aws_ebs_volume.iss-prod` in terraform) | $0.08/GB-mo | $2.40 **if it exists**. It is **not attached** to the instance (lsblk shows only the root disk), so likely an orphan. Its snapshot (`aws_ebs_snapshot.iss-prod`) is of that never-written volume, so it stores almost nothing. Checks and deletion: `terraform-iss/edge/RUNBOOK.md` phase 5a. |
 | Public IPv4 (Elastic IP) | $0.005/h | $3.65 |
 | **Total** | | **≈ $21.2–$23.6** (matches the owner's ~$22) |
 
@@ -106,7 +106,7 @@ its low-memory tips are in [ClickHouse usage tips](https://clickhouse.com/docs/o
 4. Don't buy a Savings Plan if you're moving. Buy one (on the same t3.small)
    only if staying put is the decision.
 
-**Migration:** approved by the owner; Terraform and the full runbook are in `terraform/edge/` (`RUNBOOK.md`). Outline:
+**Migration:** approved by the owner; Terraform and the full runbook are in `terraform-iss/edge` (branch `infra-edge`, worktree `~/repos/worktrees/terraform-iss-edge`), `RUNBOOK.md`. Outline:
 1. Create the Lightsail instance with the same OS family and Docker, and open
    80/tcp, 443/tcp and 443/udp.
 2. Lower the `p` record's TTL to 60 s a day ahead.
@@ -168,3 +168,63 @@ Sources:
 - [Cloudflare compression](https://developers.cloudflare.com/speed/optimization/content/compression/)
 - [Workers static assets billing](https://developers.cloudflare.com/workers/static-assets/billing-and-limitations/)
 - [Hetzner cost-optimized](https://www.hetzner.com/cloud/cost-optimized/)
+
+## 4. The $0 question, and the decision (2026-11-19)
+
+The owner asked for a $0 way to keep the same functionality. Options weighed:
+- (A) an always-free VM (Oracle A1, GCP e2-micro)
+- (B) Cloud Run with scale-to-zero
+- (C) a Cloudflare-native rewrite
+
+**Decision: Lightsail 2 GB now ($12/month, about half today's bill), and the
+Cloudflare-native rewrite (C) later**, tracked as a separate ticket by the
+coordinator. The owner was wary of Oracle's free-tier catches, and Cloud Run
+can't hold the chat connection and still needs Plausible hosted somewhere.
+The A/B research was stopped at that point, so no figures for them are
+recorded here.
+
+Verified Cloudflare terms for the option C ticket (official docs, 2026-11-19):
+
+| | Workers Free | Workers Paid ($5/month minimum) |
+|---|---|---|
+| Requests | 100,000/day | 10M/month incl., then $0.30/M |
+| CPU per invocation | **10 ms** | 30 s default, 5 min max; 30M CPU-ms/month incl. |
+| Subrequests per invocation | **50** | 10,000 |
+| Cron Triggers per account | **5** | 1,000 |
+| Outgoing connections at once | 6 | 6 |
+| Memory | 128 MB | 128 MB |
+| Cron, DO alarm and queue wall time | 15 min | 15 min |
+| D1 | 5M rows read/day, 100k written/day, 5 GB, 10 DBs; over the limit = errors, not bills | 25B read, 50M written/month, 5 GB incl. |
+| Durable Objects | SQLite-backed only; 100k req/day, 13,000 GB-s/day, 5M rows read and 100k written per day, 5 GB | 1M req and 400k GB-s/month incl. |
+
+Sources:
+[Workers limits](https://developers.cloudflare.com/workers/platform/limits/),
+[Workers pricing](https://developers.cloudflare.com/workers/platform/pricing/),
+[D1 pricing](https://developers.cloudflare.com/d1/platform/pricing/),
+[DO pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/),
+[outbound WebSockets](https://developers.cloudflare.com/workers/examples/websockets/),
+[TCP sockets](https://developers.cloudflare.com/workers/runtime-apis/tcp-sockets/),
+[DO WebSockets](https://developers.cloudflare.com/durable-objects/best-practices/websockets/).
+
+**What that means for the rewrite:**
+- The bot's load fits Free: a few thousand webhooks plus 10–50k API
+  requests a day, and 3 of the 5 cron triggers. That holds only if each
+  handler stays under **10 ms of CPU**. Waiting on Helix or GitHub counts as
+  wall time, not CPU.
+- Each reconcile or refresh run must also stay under **50 subrequests**.
+  Batch Helix calls (100 IDs per call) and use the GitHub API's tree/commit
+  endpoints rather than one call per file. If either is tight, $5/month
+  Paid removes the limits.
+- **Twitch chat:** a Durable Object can open an outbound WebSocket, or TLS
+  TCP with `connect()`; port 6697 is not blocked.
+  - Outgoing sockets **don't hibernate**. They keep the DO resident for up to
+    15 minutes, and the socket may stay open longer.
+  - So a chat client needs regular traffic or an alarm, plus reconnect
+    logic, because evictions and deploys drop it.
+- **Not verified:**
+  - whether `connect()` is available on Free
+  - whether time held by an outgoing socket counts as billed DO duration
+    (one resident 128 MB DO ≈ 10,800 GB-s/day, under the free 13,000)
+- **Plausible CE needs a server either way.** Option C also means picking
+  hosted analytics, for example Cloudflare Web Analytics, Counterscale, or
+  Plausible Cloud (paid). That research was stopped before it finished.

@@ -16,7 +16,7 @@
     "not_found_handling": "404-page"
   },
   // No "routes": the apex custom domain (cloudflare_workers_custom_domain)
-  // and the www redirect are owned by Terraform (deploy/edge/terraform/edge),
+  // and the www redirect are owned by Terraform (terraform-iss/edge),
   // so wrangler only uploads content and the two tools never fight.
   "workers_dev": false,
   "preview_urls": false

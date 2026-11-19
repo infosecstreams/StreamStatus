@@ -13,8 +13,7 @@ trap cleanup EXIT
 # Test copy of the Caddyfile: internal CA instead of ACME.
 sed -e '/^\tcert_issuer acme {/,/^\t}/d' -e 's/^\temail .*/\tlocal_certs/' "$here/../caddy/Caddyfile" > "$work/Caddyfile"
 
-mkdir -p "$work/bot/streamstatus/stats" "$work/backspin"
-echo "backspin home" > "$work/backspin/index.html"
+mkdir -p "$work/bot/streamstatus/stats"
 python3 -I -c '
 import json,sys
 s=[{"id":str(i),"login":"user%d"%i,"display_name":"user%d"%i,"status":"offline","hours_30d":i%50} for i in range(400)]
@@ -26,7 +25,7 @@ printf 'BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n' > "$work/bot/streamstatus/schedule
 docker network create "$net" >/dev/null
 docker run -d --name "$net-up" --network "$net" --network-alias streamstatus --network-alias plausible \
   -v "$here/upstreams.Caddyfile:/etc/caddy/Caddyfile:ro" -v "$work/bot:/srv/bot:ro" "$img" >/dev/null
-docker run -d --name "$net-edge" --network "$net" -v "$work/Caddyfile:/etc/caddy/Caddyfile:ro" -v "$work/backspin:/srv/backspin:ro" "$img" >/dev/null
+docker run -d --name "$net-edge" --network "$net" -v "$work/Caddyfile:/etc/caddy/Caddyfile:ro" "$img" >/dev/null
 sleep 3
 
 # curl inside the network, against the edge container's IP with the real hostname.
@@ -78,7 +77,6 @@ check "null UA aborted" "000" "$(c -o /dev/null -w '%{http_code}' -A '' $U/ || t
 check "security.txt" "Contact: mailto:security.txt@infosecstreams.com" "$(c $U/.well-known/security.txt)"
 check "wrong SNI rejected" "000" "$(docker run --rm --network "$net" ymuski/curl-http3 curl -sk -o /dev/null -w '%{http_code}' --resolve "x.example:443:$ip" https://x.example/ || true)"
 check "http redirects to https" "308" "$(docker run --rm --network "$net" ymuski/curl-http3 curl -s -o /dev/null -w '%{http_code}' --resolve "p.infosecstreams.com:80:$ip" http://p.infosecstreams.com/)"
-check "backspin on :8080" "backspin home" "$(docker run --rm --network "$net" ymuski/curl-http3 curl -s --resolve "backspin.highvibes.cloud:8080:$ip" http://backspin.highvibes.cloud:8080/some/route)"
 check "http/3" "3 200" "$(c --http3-only -o /dev/null -w '%{http_version} %{http_code}' -A Mozilla/5.0 $U/)"
 
 docker stats --no-stream --format 'edge caddy memory: {{.MemUsage}}' "$net-edge"

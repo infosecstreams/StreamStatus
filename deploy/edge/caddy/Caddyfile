@@ -8,7 +8,6 @@
 #   everything else              Plausible CE -> plausible:8000 (including
 #                                Plausible's /api/* and its LiveView /live/websocket
 #                                and /live/longpoll)
-#   backspin.highvibes.cloud:8080  static files (as in the nginx config today)
 #
 # Upstreams are compose service names. Caddy resolves them on every new
 # connection, so a recreated container (new IP after a deploy) needs no
@@ -157,22 +156,4 @@ p.infosecstreams.com {
 # requests for unknown hosts are closed, like nginx's `return 444`.
 http:// {
 	abort
-}
-
-# backspin.highvibes.cloud on :8080, ported from the nginx block (marked
-# "temporary" there). Plain HTTP on loopback: the host's Cloudflare Tunnel
-# (remotely managed; its only route is backspin.highvibes.cloud ->
-# http://127.0.0.1:8080) is the way in. Drop this block, the port and the
-# volume in compose when backspin is gone. ci-deploy-security's streamstatus
-# service publishes 127.0.0.1:8080 too; that publish must move to
-# 127.0.0.1:18080 (and HEALTH_URL with it).
-http://backspin.highvibes.cloud:8080 {
-	root * /srv/backspin
-	try_files {path} {path}/ /index.html
-	file_server
-	header {
-		X-Content-Type-Options nosniff
-		X-Frame-Options DENY
-		Referrer-Policy no-referrer
-	}
 }

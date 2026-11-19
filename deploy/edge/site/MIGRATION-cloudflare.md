@@ -1,8 +1,8 @@
 # Site migration: GitHub Pages → Cloudflare Workers static assets
 
 The zone, DNS records, redirect and apex binding are **Terraform**
-(`../terraform/edge`). The order of phases, the nameserver move and rollback
-are in `../terraform/edge/RUNBOOK.md` (phases 1 and 4). This file covers the
+(`terraform-iss/edge` (branch `infra-edge`, worktree `~/repos/worktrees/terraform-iss-edge`)). The order of phases, the nameserver move and rollback
+are in its `RUNBOOK.md` (phases 1 and 4). This file covers the
 site repository's side and the checks. Cost: $0. Static-asset requests are
 free and unlimited on Workers Free.
 
