@@ -7,7 +7,8 @@ and its migration runbook live with the existing infrastructure code. That's
 
 - `edge/README.md`: design, what is in state, the S3 backend
 - `edge/RUNBOOK.md`: phases 0–5 (EC2 → Lightsail, DigitalOcean → Cloudflare,
-  site → Workers, decommission, orphan EBS checks), each with rollback
+  site → Workers, decommission of the old server with its disk and Elastic IP),
+  each with rollback
 
 `iss-sg-quic.tf.snippet` here is only for running Caddy on the old EC2 box
 (UDP 443 in its security group). It isn't needed once on Lightsail.

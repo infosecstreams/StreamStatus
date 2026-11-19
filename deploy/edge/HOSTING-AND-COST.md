@@ -72,17 +72,26 @@ its low-memory tips are in [ClickHouse usage tips](https://clickhouse.com/docs/o
 | Line | Rate | Monthly |
 |---|---|---|
 | t3.small on-demand | $0.0208/h | $15.18 |
-| gp3 root 30 GiB | $0.08/GB-mo | $2.40 |
-| Second 30 GiB gp3 volume (`aws_ebs_volume.iss-prod` in terraform) | $0.08/GB-mo | $2.40 **if it exists**. It is **not attached** to the instance (lsblk shows only the root disk), so likely an orphan. Its snapshot (`aws_ebs_snapshot.iss-prod`) is of that never-written volume, so it stores almost nothing. Checks and deletion: `terraform-iss/edge/RUNBOOK.md` phase 5a. |
+| gp3 30 GiB: `vol-00239ae1d5c7a8bd6`, **the server's only disk, in use** | $0.08/GB-mo | $2.40 |
+| Snapshot `snap-09d07a4c38743d318` (2023-05-18): an old backup of that disk | $0.05/GB-mo of stored blocks | ~$0.57 |
 | Public IPv4 (Elastic IP) | $0.005/h | $3.65 |
-| **Total** | | **≈ $21.2–$23.6** (matches the owner's ~$22) |
+| **Total** | | **≈ $21.8** (matches the owner's ~$22) |
+
+**Correction:** an earlier version of this file called
+`vol-00239ae1d5c7a8bd6` an orphan, from reading the 2023 Terraform. **It is
+not.** It is production's only disk, verified with the owner's credentials on
+2026-11-19: one volume, in-use, attached to `i-02c4d00dffd268f8e`. It goes
+away only with the old instance, at decommission.
+
+**Why the bill jumped to ~$22 in September 2026:** two all-upfront t3.nano
+Reserved Instances expired on 2026-08-27. They had covered half of the
+t3.small's hours.
 
 **Options, all-in monthly:**
 
 | Option | Monthly | RAM | Effort | Notes |
 |---|---|---|---|---|
 | Today | ~$22–25 | 2 GiB | — | |
-| **Quick win: delete the orphan volume and snapshot** (after checking in the console that it is unattached and unneeded) | −$2.40 | — | 5 min | No other change |
 | 1-yr EC2 Instance Savings Plan on the **same t3.small** | ~$15.5 | 2 GiB | 10 min, no migration | Commits for a year; rules out moving within the year |
 | t4g.small (Graviton) + 1-yr EC2 Instance SP ($0.0105/h) | ~$13.7 | 2 GiB | Migration plus an **arm64 build of the bot** (the only amd64-only image; Plausible, ClickHouse, Postgres and Caddy are all multi-arch) | Postgres must move with pg_dump (the data dir isn't portable across architectures) |
 | t4g.medium + 1-yr SP | ~$21.4 | **4 GiB** | Same as above | Today's money, double the RAM |
@@ -92,18 +101,21 @@ its low-memory tips are in [ClickHouse usage tips](https://clickhouse.com/docs/o
 | Hetzner CAX11 (ARM, 4 GB, EU only) | €6.49 + VAT | 4 GiB | Migration + arm64 bot | **Shown "currently unavailable"**; US locations only offer CPX at €17.99 for 2 GB after the 2026 price rises. Not recommended right now |
 
 **Recommendation:**
-1. **Now:** delete the orphan EBS volume and snapshot, if the console
-   confirms them.
-2. **Then:** move to **Lightsail 2 GB for $12/month**, about **half today's
+1. Move to **Lightsail 2 GB for $12/month** (bundle `small_3_0`, IPv4
+   included; the $10 IPv6-only bundle can't reach GitHub), about **half today's
    bill**.
    - Same architecture, so docker volumes copy across with no dump and restore.
    - No 1-year lock-in, IPv4 included, 60 GB of disk.
    - Do it together with the Caddy cutover: the new box starts on Caddy.
-     Rollback is then just the old instance, kept stopped for two weeks. A
-     stopped EC2 instance costs only its disk and IP.
-3. Apply ClickHouse's low-memory settings. If the box still swaps hard after
+     Rollback is then just the old instance, kept stopped for a week. A
+     stopped EC2 instance still costs its disk and IP (~$6/month).
+   - At decommission (after the week, with the owner's go-ahead): terminate
+     the old instance together with its disk, release the Elastic IP, and
+     optionally delete the 2023 snapshot (`terraform-iss/edge/RUNBOOK.md`
+     phase 5).
+2. Apply ClickHouse's low-memory settings. If the box still swaps hard after
    the move, step up to the 4 GB plan ($24).
-4. Don't buy a Savings Plan if you're moving. Buy one (on the same t3.small)
+3. Don't buy a Savings Plan if you're moving. Buy one (on the same t3.small)
    only if staying put is the decision.
 
 **Migration:** approved by the owner; Terraform and the full runbook are in `terraform-iss/edge` (branch `infra-edge`, worktree `~/repos/worktrees/terraform-iss-edge`), `RUNBOOK.md`. Outline:
