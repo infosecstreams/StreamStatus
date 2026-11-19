@@ -107,6 +107,9 @@ type scheduleState struct {
 	refreshedAt time.Time // end of the last refresh; zero before the first
 	rosterFails int       // consecutive refreshes that couldn't resolve the roster
 
+	// adherence is each streamer's track record of keeping their schedule.
+	adherence *adherenceTracker
+
 	// preliveDone remembers segments already turned into a 🟡 marker (or
 	// skipped), so each scheduled start triggers at most one site commit.
 	// Worker only.
@@ -119,11 +122,13 @@ func newScheduleState(client scheduleClient) *scheduleState {
 		roster:      map[string]rosterEntry{},
 		byID:        map[string]*broadcasterSchedule{},
 		preliveDone: map[string]time.Time{},
+		adherence:   newAdherenceTracker(),
 	}
 }
 
 // startScheduleRefresher fetches every schedule now and then every
-// interval, and checks for scheduled pre-live streamers every minute.
+// interval, checks for scheduled pre-live streamers every minute, and
+// tracks whether scheduled streams happen every adherencePollInterval.
 func (s *StreamersRepo) startScheduleRefresher(interval time.Duration) {
 	go func() {
 		for {
@@ -137,6 +142,15 @@ func (s *StreamersRepo) startScheduleRefresher(interval time.Duration) {
 		for range t.C {
 			if !s.enqueue(statusJob{kind: jobFunc, fn: s.checkSchedulePrelive}) {
 				log.Warn("schedule: pre-live check skipped: event queue full")
+			}
+		}
+	}()
+	go func() {
+		t := time.NewTicker(adherencePollInterval)
+		defer t.Stop()
+		for range t.C {
+			if !s.enqueue(statusJob{kind: jobFunc, fn: s.trackScheduleAdherence}) {
+				log.Warn("schedule: track record poll skipped: event queue full")
 			}
 		}
 	}()
@@ -572,6 +586,10 @@ type scheduleSegmentJSON struct {
 	Category    string `json:"category,omitempty"`
 	Canceled    bool   `json:"canceled"`
 	Vacation    bool   `json:"vacation,omitempty"`
+	// TrackRecord is how many of the streamer's recent scheduled streams
+	// they went live for (within adherenceTolerance); omitted if none
+	// were judged yet.
+	TrackRecord *trackRecordJSON `json:"track_record,omitempty"`
 }
 
 type scheduleJSON struct {
@@ -626,10 +644,13 @@ func (s *StreamersRepo) serveScheduleJSON(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	writeScheduleBody(w, r, "application/json; charset=utf-8", renderScheduleJSON(segs, roster, generated))
+	writeScheduleBody(w, r, "application/json; charset=utf-8", renderScheduleJSON(segs, roster, generated, s.scheduleTrackRecord))
 }
 
-func renderScheduleJSON(segs []scheduledSegment, roster map[string]rosterEntry, generated time.Time) []byte {
+// trackRecordFunc returns a streamer's kept/total scheduled streams.
+type trackRecordFunc func(id string) (kept, total int)
+
+func renderScheduleJSON(segs []scheduledSegment, roster map[string]rosterEntry, generated time.Time, record trackRecordFunc) []byte {
 	out := scheduleJSON{GeneratedAt: generated.UTC().Format(time.RFC3339), Segments: []scheduleSegmentJSON{}}
 	for _, g := range segs {
 		e := roster[g.BroadcasterID]
@@ -646,6 +667,9 @@ func renderScheduleJSON(segs []scheduledSegment, roster map[string]rosterEntry, 
 		}
 		if !g.End.IsZero() {
 			j.End = g.End.UTC().Format(time.RFC3339)
+		}
+		if kept, total := record(g.BroadcasterID); total > 0 {
+			j.TrackRecord = &trackRecordJSON{Kept: kept, Total: total}
 		}
 		out.Segments = append(out.Segments, j)
 	}
@@ -666,14 +690,14 @@ func (s *StreamersRepo) serveScheduleICS(w http.ResponseWriter, r *http.Request)
 			}
 		}
 	}
-	writeScheduleBody(w, r, "text/calendar; charset=utf-8", renderScheduleICS(segs, roster, generated, name))
+	writeScheduleBody(w, r, "text/calendar; charset=utf-8", renderScheduleICS(segs, roster, generated, name, s.scheduleTrackRecord))
 }
 
 const icsTime = "20060102T150405Z"
 
 // renderScheduleICS renders segments as an RFC 5545 calendar. Times are
 // UTC, so no VTIMEZONE is needed.
-func renderScheduleICS(segs []scheduledSegment, roster map[string]rosterEntry, stamp time.Time, name string) []byte {
+func renderScheduleICS(segs []scheduledSegment, roster map[string]rosterEntry, stamp time.Time, name string, record trackRecordFunc) []byte {
 	var b bytes.Buffer
 	line := func(s string) { b.WriteString(foldICSLine(s)) }
 	line("BEGIN:VCALENDAR")
@@ -700,6 +724,9 @@ func renderScheduleICS(segs []scheduledSegment, roster map[string]rosterEntry, s
 		desc := url
 		if g.Category != "" {
 			desc = "Category: " + g.Category + "\n" + url
+		}
+		if kept, total := record(g.BroadcasterID); total > 0 {
+			desc += fmt.Sprintf("\nWent live for %d of their last %d scheduled streams", kept, total)
 		}
 		if g.Vacation {
 			desc = "On vacation\n" + desc

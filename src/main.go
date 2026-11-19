@@ -95,6 +95,9 @@ func main() {
 	// merge, mount scheduleHandlers() on the shared /api/ mux instead of
 	// http.DefaultServeMux. ---
 	repo.schedule = newScheduleState(client)
+	if err := repo.schedule.adherence.loadHistory(scheduleHistoryPath()); err != nil {
+		log.Warnf("schedule track record: %s", err)
+	}
 	repo.startScheduleRefresher(scheduleRefreshInterval)
 	for path, h := range repo.scheduleHandlers() {
 		http.HandleFunc(path, h)
