@@ -73,16 +73,16 @@ its low-memory tips are in [ClickHouse usage tips](https://clickhouse.com/docs/o
 |---|---|---|
 | t3.small on-demand | $0.0208/h | $15.18 |
 | gp3 root 30 GiB | $0.08/GB-mo | $2.40 |
-| Second 30 GiB gp3 volume (`aws_ebs_volume.iss-prod` in terraform) | $0.08/GB-mo | $2.40 **if it exists**. It is **not attached** to the instance (lsblk shows only the root disk), so likely an orphan. Its snapshot (`aws_ebs_snapshot.iss-prod`) costs ~$1.50 more. |
+| Second 30 GiB gp3 volume (`aws_ebs_volume.iss-prod` in terraform) | $0.08/GB-mo | $2.40 **if it exists**. It is **not attached** to the instance (lsblk shows only the root disk), so likely an orphan. Its snapshot (`aws_ebs_snapshot.iss-prod`) is of that never-written volume, so it stores almost nothing. Checks and deletion: `terraform/edge/RUNBOOK.md` phase 5a. |
 | Public IPv4 (Elastic IP) | $0.005/h | $3.65 |
-| **Total** | | **≈ $21.2–$25.1** (matches the owner's ~$22) |
+| **Total** | | **≈ $21.2–$23.6** (matches the owner's ~$22) |
 
 **Options, all-in monthly:**
 
 | Option | Monthly | RAM | Effort | Notes |
 |---|---|---|---|---|
 | Today | ~$22–25 | 2 GiB | — | |
-| **Quick win: delete the orphan volume and snapshot** (after checking in the console that it is unattached and unneeded) | −$2.40 to −$3.90 | — | 5 min | No other change |
+| **Quick win: delete the orphan volume and snapshot** (after checking in the console that it is unattached and unneeded) | −$2.40 | — | 5 min | No other change |
 | 1-yr EC2 Instance Savings Plan on the **same t3.small** | ~$15.5 | 2 GiB | 10 min, no migration | Commits for a year; rules out moving within the year |
 | t4g.small (Graviton) + 1-yr EC2 Instance SP ($0.0105/h) | ~$13.7 | 2 GiB | Migration plus an **arm64 build of the bot** (the only amd64-only image; Plausible, ClickHouse, Postgres and Caddy are all multi-arch) | Postgres must move with pg_dump (the data dir isn't portable across architectures) |
 | t4g.medium + 1-yr SP | ~$21.4 | **4 GiB** | Same as above | Today's money, double the RAM |
@@ -106,7 +106,7 @@ its low-memory tips are in [ClickHouse usage tips](https://clickhouse.com/docs/o
 4. Don't buy a Savings Plan if you're moving. Buy one (on the same t3.small)
    only if staying put is the decision.
 
-**Migration outline** (a runbook to write once the owner picks; not written yet):
+**Migration:** approved by the owner; Terraform and the full runbook are in `terraform/edge/` (`RUNBOOK.md`). Outline:
 1. Create the Lightsail instance with the same OS family and Docker, and open
    80/tcp, 443/tcp and 443/udp.
 2. Lower the `p` record's TTL to 60 s a day ahead.

@@ -1,0 +1,63 @@
+#!/bin/bash
+# First-boot bootstrap for the infosecstreams Lightsail box (Amazon Linux 2023).
+# Rendered by Terraform; contains NO secrets (it is stored in state and in
+# Lightsail's instance metadata). Log: /var/log/iss-bootstrap.log
+set -euxo pipefail
+exec > >(tee -a /var/log/iss-bootstrap.log) 2>&1
+
+# Swap: 2 GB RAM is tight for Plausible + ClickHouse + Postgres (the EC2 box
+# runs with ~285 MB swapped). Same 2 GB swap file as today.
+if [ ! -f /swapfile ]; then
+  dd if=/dev/zero of=/swapfile bs=1M count=2048
+  chmod 600 /swapfile
+  mkswap /swapfile
+  echo '/swapfile none swap defaults 0 0' >> /etc/fstab
+  swapon /swapfile
+fi
+echo 'vm.swappiness=10' > /etc/sysctl.d/90-swap.conf
+
+# QUIC (HTTP/3) UDP buffers for Caddy/quic-go.
+printf 'net.core.rmem_max=7500000\nnet.core.wmem_max=7500000\n' > /etc/sysctl.d/99-quic.conf
+sysctl --system
+
+# Base packages and automatic security updates.
+dnf -y install docker git rsync jq tar gzip dnf-automatic
+sed -i 's/^upgrade_type.*/upgrade_type = security/; s/^apply_updates.*/apply_updates = yes/' /etc/dnf/automatic.conf
+systemctl enable --now dnf-automatic.timer
+
+# Docker with rotated json logs; enabled at boot (on the EC2 box docker is
+# active but not enabled).
+mkdir -p /etc/docker
+cat > /etc/docker/daemon.json <<'JSON'
+{ "log-driver": "json-file", "log-opts": { "max-size": "10m", "max-file": "5" } }
+JSON
+systemctl enable --now docker
+usermod -aG docker ec2-user
+
+# Docker Compose ${compose_version}, checksum-verified. Installed as a CLI
+# plugin (`docker compose`) and as `docker-compose`, the name the deploy
+# script calls.
+curl -fsSL -o /tmp/docker-compose "https://github.com/docker/compose/releases/download/${compose_version}/docker-compose-linux-x86_64"
+echo "${compose_sha256}  /tmp/docker-compose" | sha256sum -c -
+mkdir -p /usr/local/lib/docker/cli-plugins
+install -m 0755 /tmp/docker-compose /usr/local/lib/docker/cli-plugins/docker-compose
+ln -sf /usr/local/lib/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose
+
+# cloudflared (Cloudflare's signed RPM repo). Not connected: run
+#   sudo cloudflared service install <tunnel token>
+# by hand (RUNBOOK.md), so the token stays out of Terraform.
+curl -fsSL https://pkg.cloudflare.com/cloudflared.repo -o /etc/yum.repos.d/cloudflared.repo
+dnf -y install cloudflared
+
+# Tailscale (signed repo). Not joined: run `sudo tailscale up --ssh` by hand.
+curl -fsSL https://pkgs.tailscale.com/stable/amazon-linux/2023/tailscale.repo -o /etc/yum.repos.d/tailscale.repo
+dnf -y install tailscale
+systemctl enable --now tailscaled
+
+# Layout the compose stack expects (same paths as the EC2 box). Caddy itself
+# runs as a container from the compose file (image pinned by digest), so it
+# is not installed on the host.
+install -d -o ec2-user -g ec2-user -m 0755 /home/ec2-user/hosting /home/ec2-user/hosting/caddy /home/ec2-user/backspin
+install -d -o ec2-user -g ec2-user -m 0700 /home/ec2-user/hosting/secrets
+
+echo "bootstrap done $(date -u +%FT%TZ)" > /var/lib/iss-bootstrap.done

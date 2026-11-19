@@ -14,7 +14,8 @@ is applied yet.
 | `HOSTING-AND-COST.md` | Site hosting with GitHub Pages dropped, the box's cost and cheaper options, and the "newer than Caddy?" survey |
 | `docker-compose.caddy.yml` | The `caddy` service for the host's compose file |
 | `CUTOVER-caddy.md` | Cutover runbook: certificate obtained before switching, 2–4 s port hand-off, rollback |
-| `terraform/iss-sg-quic.tf.snippet` | Security group: UDP 443 for HTTP/3 |
+| `terraform/edge/` | **Terraform for the new stack**: Lightsail 2 GB box (bootstrap, static IP, firewall) and the Cloudflare zone; `RUNBOOK.md` = migration EC2 → Lightsail and DO → Cloudflare, incl. orphan-EBS checks |
+| `terraform/iss-sg-quic.tf.snippet` | Security group: UDP 443 for HTTP/3 (only if Caddy goes on the old EC2 box) |
 | `nginx-streamstatus-api.conf` | **Only if Caddy is not adopted:** `location /streamstatus/` for the deployed nginx config, replacing ci-deploy's `location /api/` |
 | `test/run.sh` | Local test of the Caddyfile against fake upstreams (32 checks, docker) |
 | `site/` | Cloudflare migration for the Astro site: `_headers`, `wrangler.jsonc`, a workflow job, `MIGRATION-cloudflare.md`; `precompress.sh` for option (a) |

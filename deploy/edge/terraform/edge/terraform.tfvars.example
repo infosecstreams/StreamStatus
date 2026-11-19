@@ -1,0 +1,7 @@
+# Copy to terraform.tfvars (git-ignored). No secrets belong here: AWS and
+# Cloudflare credentials come from the environment.
+ssh_public_key        = "ssh-ed25519 AAAA... owner@laptop"
+cloudflare_account_id = "0123456789abcdef0123456789abcdef"
+admin_ssh_cidrs       = [] # e.g. ["107.3.164.0/22"] for break-glass SSH
+p_record_target       = "ec2"   # flip to "lightsail" at cutover
+site_on_workers       = false   # flip to true after the first wrangler deploy

@@ -24,7 +24,9 @@ services:
       - "80:80"
       - "443:443"
       - "443:443/udp"   # HTTP/3 (QUIC). The security group must allow UDP 443.
-      - "8080:8080"     # backspin.highvibes.cloud, as nginx publishes today
+      # backspin.highvibes.cloud: the Cloudflare Tunnel (cloudflared on the
+      # host) reaches it at http://127.0.0.1:8080, so loopback only.
+      - "127.0.0.1:8080:8080"
     environment:
       # ACME account contact. Optional; defaults to the security.txt address.
       ACME_EMAIL: security.txt@infosecstreams.com
