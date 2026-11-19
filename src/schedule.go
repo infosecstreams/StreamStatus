@@ -110,7 +110,7 @@ type scheduleState struct {
 
 	// adherence is each streamer's track record of keeping their schedule.
 	adherence *adherenceTracker
-	// habits are each streamer's usual weekly slots (stream_history.go),
+	// habits are each streamer's usual weekly slots (schedule_habits.go),
 	// recomputed after every refresh; guarded by mu.
 	habits map[string][]habitSlot
 	// past overrides where past streams come from (tests); nil reads

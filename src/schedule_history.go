@@ -49,7 +49,7 @@ type adherenceOutcome struct {
 	Kept      bool      `json:"kept"`
 	LiveAt    time.Time `json:"live_at,omitzero"`
 	// Estimated outcomes are projected from stream history (see
-	// stream_history.go), not observed.
+	// schedule_habits.go), not observed.
 	Estimated bool `json:"estimated,omitempty"`
 }
 
