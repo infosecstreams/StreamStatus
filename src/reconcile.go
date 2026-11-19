@@ -85,6 +85,10 @@ func (s *StreamersRepo) reconcile() {
 		}
 	}
 
+	// Rows marked 🟢 for someone missing from streamers.csv (hand-edited,
+	// renamed) are checked too, or they'd stay green forever.
+	active = withMarkedRows(active, onlineStreamers(s.indexMdText))
+
 	live, err := s.fetchLiveByLogin(append(append([]string{}, active...), inactive...))
 	if err != nil {
 		// Acting on a partial answer would mark live streamers offline.
@@ -99,21 +103,25 @@ func (s *StreamersRepo) reconcile() {
 		s.clearPrelive(name)
 	}
 	log.Infof("reconcile: %d active, %d inactive checked, %d live, %d corrections", len(active), len(inactive), len(live), len(changes))
-	if len(changes) == 0 {
-		return
-	}
 	var summary strings.Builder
+	corrected := 0
 	for _, c := range changes {
 		log.Warnf("reconcile: correcting %s to online=%v", c.name, c.online)
+		if !s.applyStatus(c.name, c.online, c.stream.GameName, c.stream.Language, c.stream.Tags) {
+			continue
+		}
+		corrected++
 		state := "offline"
 		if c.online {
 			state = "online"
 		}
 		fmt.Fprintf(&summary, "• %s → %s\n", c.name, state)
-		s.applyStatus(c.name, c.online, c.stream.GameName, c.stream.Language, c.stream.Tags)
+	}
+	if corrected == 0 {
+		return
 	}
 	// Each correction is an EventSub event the bot never got (or got wrong).
-	s.alert(fmt.Sprintf("Reconcile corrected %d streamer(s)", len(changes)), summary.String())
+	s.alert(fmt.Sprintf("Reconcile corrected %d streamer(s)", corrected), summary.String())
 }
 
 // diffLiveState returns the corrections needed so the site matches Helix.
@@ -133,9 +141,6 @@ func diffLiveState(active, inactive []string, onlineNow map[string]bool, live ma
 		c := statusChange{name: name, online: want}
 		if want {
 			c.stream = stream
-			if stream.UserName != "" {
-				c.name = stream.UserName
-			}
 		}
 		changes = append(changes, c)
 	}
@@ -144,11 +149,7 @@ func diffLiveState(active, inactive []string, onlineNow map[string]bool, live ma
 		if !isLive || !contains(VALID_GAMES, stream.GameName) {
 			continue
 		}
-		c := statusChange{name: name, online: true, stream: stream}
-		if stream.UserName != "" {
-			c.name = stream.UserName
-		}
-		changes = append(changes, c)
+		changes = append(changes, statusChange{name: name, online: true, stream: stream})
 	}
 	return changes
 }
@@ -268,4 +269,21 @@ func expiredPrelive(prelive map[string]preliveRow, live map[string]helix.Stream,
 	}
 	sort.Strings(out)
 	return out
+}
+
+// withMarkedRows adds the names of 🟢 rows that aren't in the active list.
+func withMarkedRows(active []string, marked map[string]bool) []string {
+	have := map[string]bool{}
+	for _, n := range active {
+		have[strings.ToLower(n)] = true
+	}
+	out := append([]string{}, active...)
+	extra := make([]string, 0)
+	for n := range marked {
+		if !have[n] {
+			extra = append(extra, n)
+		}
+	}
+	sort.Strings(extra)
+	return append(out, extra...)
 }

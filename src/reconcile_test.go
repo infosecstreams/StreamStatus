@@ -68,10 +68,11 @@ func TestDiffLiveState(t *testing.T) {
 			want:   []statusChange{{name: "alpha", online: false}},
 		},
 		{
+			// The row keeps its own capitalisation when rewritten (rowName).
 			name:   "csv casing differs from helix",
 			active: []string{"thelaluka"},
 			live:   map[string]helix.Stream{"thelaluka": chatting("TheLaluka")},
-			want:   []statusChange{{name: "TheLaluka", online: true, stream: chatting("TheLaluka")}},
+			want:   []statusChange{{name: "thelaluka", online: true, stream: chatting("TheLaluka")}},
 		},
 		{
 			// Garr_7 on 2026-11-05: live, but moved back to inactive.

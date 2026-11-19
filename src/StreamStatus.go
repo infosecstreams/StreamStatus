@@ -2,8 +2,12 @@ package main
 
 import (
 	"bytes"
-	"errors"
+	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -92,6 +96,47 @@ type streamsClient interface {
 	GetStreams(params *helix.StreamsParams) (*helix.StreamsResponse, error)
 }
 
+// maxWebhookBody caps the size of an EventSub request body.
+const maxWebhookBody = 1 << 20
+
+// maxMessageAge is how old (or how far in the future) a signed EventSub
+// message may be; older ones are replays. Twitch recommends 10 minutes.
+const maxMessageAge = 10 * time.Minute
+
+// verifyEventSub checks an EventSub request's HMAC-SHA256 signature in
+// constant time, and rejects stale timestamps so a captured message can't
+// be replayed once it has left the message-ID cache.
+func verifyEventSub(secret string, h http.Header, body []byte, now time.Time) error {
+	id := h.Get("Twitch-Eventsub-Message-Id")
+	ts := h.Get("Twitch-Eventsub-Message-Timestamp")
+	sig := h.Get("Twitch-Eventsub-Message-Signature")
+	if secret == "" || id == "" || ts == "" || !strings.HasPrefix(sig, "sha256=") {
+		return errors.New("missing EventSub signature headers")
+	}
+	got, err := hex.DecodeString(strings.TrimPrefix(sig, "sha256="))
+	if err != nil {
+		return errors.New("malformed signature")
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(id + ts))
+	mac.Write(body)
+	if !hmac.Equal(got, mac.Sum(nil)) {
+		return errors.New("invalid signature")
+	}
+	sent, err := time.Parse(time.RFC3339, ts)
+	if err != nil {
+		return fmt.Errorf("malformed timestamp %q", ts)
+	}
+	if age := now.Sub(sent); age > maxMessageAge || age < -maxMessageAge {
+		return fmt.Errorf("stale message %s (sent %s)", id, ts)
+	}
+	return nil
+}
+
+// gitTimeout bounds every git network operation, so a hung connection to
+// GitHub can't wedge the worker (and with it every queued event).
+const gitTimeout = 2 * time.Minute
+
 // NoChangeNeededError is a struct for a custom error handler
 // when no changes are needed to the git repository.
 type NoChangeNeededError struct {
@@ -105,7 +150,9 @@ func (e *NoChangeNeededError) Error() string {
 
 // gitPush pushes the repository to github and return and error.
 func (s *StreamersRepo) gitPush() error {
-	err := s.repo.Push(&git.PushOptions{
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	defer cancel()
+	err := s.repo.PushContext(ctx, &git.PushOptions{
 		RemoteName: "origin",
 		Auth:       s.auth,
 	})
@@ -156,13 +203,14 @@ func (s *StreamersRepo) gitAdd() error {
 	if err != nil {
 		log.Errorf("Error reading sitemap.xml: %s", err)
 	}
-	newXML, err := updateSitemapXML(sitemap)
-	if err != nil {
-		log.Errorf("Error updating sitemap.xml: %s", err)
-	}
-	err = os.WriteFile(sitemapPath, newXML, 0644)
-	if err != nil {
-		log.Errorf("Error writing sitemap.xml: %s", err)
+	// Only touch sitemap.xml if it could be read and updated; writing the
+	// nil result of a failed parse used to commit an empty sitemap.
+	if err == nil {
+		if newXML, err := updateSitemapXML(sitemap); err != nil {
+			log.Errorf("Error updating sitemap.xml: %s", err)
+		} else if err := os.WriteFile(sitemapPath, newXML, 0644); err != nil {
+			log.Errorf("Error writing sitemap.xml: %s", err)
+		}
 	}
 
 	w, err := s.repo.Worktree()
@@ -214,7 +262,9 @@ func (s *StreamersRepo) getHeadCommit() (string, error) {
 // getRepo clones a repo to pwd and returns an error.
 func (s *StreamersRepo) getRepo() error {
 	directory := strings.SplitN(s.url, "/", 5)[4]
-	repo, err := git.PlainClone(directory, false, &git.CloneOptions{
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	defer cancel()
+	repo, err := git.PlainCloneContext(ctx, directory, false, &git.CloneOptions{
 		// The intended use of a GitHub personal access token is to replace passwords because
 		// access tokens can easily be revoked.
 		// https://help.github.com/articles/creating-a-personal-access-token-for-the-command-line/
@@ -245,7 +295,7 @@ func (s *StreamersRepo) getRepo() error {
 	// because a PR merged upstream first). Fetch and hard-reset instead: any
 	// discarded local commit failed to push anyway, and the status is
 	// regenerated from scratch on every event.
-	err = repo.Fetch(&git.FetchOptions{
+	err = repo.FetchContext(ctx, &git.FetchOptions{
 		RemoteName: "origin",
 		Auth:       s.auth,
 		Force:      true,
@@ -312,6 +362,7 @@ func (s *StreamersRepo) updateStreamStatus() error {
 			if len(cols) < 3 {
 				return fmt.Errorf("malformed index.md row for %s: %q", s.streamer, v)
 			}
+			s.streamer = rowName(v, s.streamer)
 			newLine := s.generateStreamerLine(cols[2])
 			if newLine != v {
 				indexMdLines[i] = newLine
@@ -352,6 +403,7 @@ func (s *StreamersRepo) updateStreamStatus() error {
 				return fmt.Errorf("index.md has no Credits heading; can't place %s", s.streamer)
 			}
 			end := credits - 1
+			s.streamer = rowName(v, s.streamer)
 			newLine := s.generateStreamerLine(cols[1])
 			inactiveMdLines = append(inactiveMdLines[:i], inactiveMdLines[i+1:]...)
 			indexMdLines = append(indexMdLines[:end], append([]string{newLine}, indexMdLines[end:]...)...)
@@ -369,6 +421,17 @@ func (s *StreamersRepo) updateStreamStatus() error {
 	s.inactiveMdText = strings.Join(inactiveMdLines, "\n")
 
 	return nil
+}
+
+// rowName returns the streamer name as written in a page row (the first
+// backticked word), so rewriting a row keeps its capitalisation even though
+// events are matched by lowercase login.
+func rowName(row, fallback string) string {
+	parts := strings.SplitN(row, "`", 3)
+	if len(parts) == 3 && parts[1] != "" {
+		return parts[1]
+	}
+	return fallback
 }
 
 func (s *StreamersRepo) generateStreamerLine(otherInfo string) string {
@@ -442,10 +505,13 @@ func (s *StreamersRepo) readFile() error {
 // updateMarkdown reads index.md, updates the streamer's status,
 // then writes the change back to index.md and returns an error.
 func updateMarkdown(repo *StreamersRepo) error {
-	err := repo.getRepo()
-	if err != nil {
-		log.Printf("error during repo clone: %s", err)
+	// Never edit a worktree that isn't synced with origin: the change would
+	// be built on stale files (or, with no clone yet, crash in gitAdd).
+	if err := repo.getRepo(); err != nil {
+		log.Errorf("error syncing site repo, skipping update for %s: %s", repo.streamer, err)
+		return err
 	}
+	var err error
 
 	err = repo.readFile()
 	if err != nil {
@@ -512,43 +578,48 @@ func (s *StreamersRepo) moveCsvEntry() error {
 }
 
 // updateRepo adds and commits the chanages to the repository.
-func updateRepo(repo *StreamersRepo) {
-	err := repo.gitAdd()
-	if err != nil {
-		log.Printf("error git adding file: error: %s", err)
+func updateRepo(repo *StreamersRepo) error {
+	if err := repo.gitAdd(); err != nil {
+		log.Errorf("error staging changes for %s: %s", repo.streamer, err)
+		return err
 	}
-
-	err = repo.gitCommit()
-	if err != nil {
-		log.Printf("error making commit: %s", err)
+	if err := repo.gitCommit(); err != nil {
+		log.Errorf("error making commit for %s: %s", repo.streamer, err)
+		return err
 	}
+	return nil
 }
 
-// pushRepo pushes the committed changes to GitHub. If the push fails (e.g.
-// non-fast-forward because a PR merged upstream between our sync and push),
-// it resyncs the clone with origin and replays the update once so the event
-// isn't lost.
-func pushRepo(repo *StreamersRepo) {
+// pushRepo pushes the committed changes to GitHub and reports whether the
+// change reached origin. If the push fails (e.g. non-fast-forward because a
+// PR merged upstream between our sync and push), it resyncs the clone with
+// origin and replays the update once so the event isn't lost.
+func pushRepo(repo *StreamersRepo) bool {
 	err := repo.gitPush()
 	if err == nil {
-		return
+		return true
 	}
 	log.Printf("error pushing repo to GitHub: %s -- resyncing with origin and retrying once", err)
 
 	retryErr := updateMarkdown(repo)
 	if retryErr != nil {
-		if _, ok := retryErr.(*NoChangeNeededError); ok {
+		var noChange *NoChangeNeededError
+		if errors.As(retryErr, &noChange) {
 			// After resyncing, origin already reflects the desired state.
 			log.Printf("no push needed after resync for %s", repo.streamer)
-			return
+			return true
 		}
 		notifyPushError(repo, retryErr)
-		return
+		return false
 	}
-	updateRepo(repo)
+	if err := updateRepo(repo); err != nil {
+		return false
+	}
 	if err := repo.gitPush(); err != nil {
 		notifyPushError(repo, err)
+		return false
 	}
+	return true
 }
 
 // notifyPushError reports a push failure; Error level also alerts Discord.
@@ -569,17 +640,19 @@ type eventSubNotification struct {
 // as failed (and retries it) if the response takes more than a few seconds,
 // and the git sync/commit/push for an event takes far longer than that.
 func (s *StreamersRepo) eventsubStatus(w http.ResponseWriter, r *http.Request) {
-	body, err := io.ReadAll(r.Body)
+	// EventSub messages are a few KB; don't let anyone make us buffer more
+	// than this before the signature is checked.
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxWebhookBody))
 	if err != nil {
-		log.Println(err)
-		w.WriteHeader(http.StatusBadRequest)
+		log.Warnf("rejecting webhook body: %s", err)
+		w.WriteHeader(http.StatusRequestEntityTooLarge)
 		return
 	}
 	defer r.Body.Close()
 
 	// Verify that the notification came from twitch using the secret.
-	if !helix.VerifyEventSubNotification(os.Getenv("SS_SECRETKEY"), r.Header, string(body)) {
-		log.Println("invalid signature on message")
+	if err := verifyEventSub(os.Getenv("SS_SECRETKEY"), r.Header, body, timeNow()); err != nil {
+		log.Warnf("rejecting webhook: %s", err)
 		w.WriteHeader(http.StatusTeapot)
 		w.Write([]byte("I am, unfortunately for you, a teapot.\n"))
 		return
@@ -615,6 +688,10 @@ func (s *StreamersRepo) eventsubStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get("Twitch-Eventsub-Message-Type") == "revocation" {
 		log.Errorf("EventSub subscription revoked: type=%s broadcaster=%s status=%s id=%s",
 			vals.Subscription.Type, vals.Subscription.Condition.BroadcasterUserID, vals.Subscription.Status, vals.Subscription.ID)
+		if s.callbackURL != "" {
+			// Recreate it now rather than at the next daily sync.
+			s.enqueue(statusJob{kind: jobSyncSubscriptions})
+		}
 		w.Write([]byte("OK"))
 		return
 	}
@@ -643,18 +720,18 @@ func jobFromNotification(vals eventSubNotification) (statusJob, bool) {
 	case "stream.offline":
 		var e helix.EventSubStreamOfflineEvent
 		_ = json.Unmarshal(vals.Event, &e)
-		return statusJob{kind: jobOffline, userID: e.BroadcasterUserID, userName: e.BroadcasterUserName}, true
+		return statusJob{kind: jobOffline, userID: e.BroadcasterUserID, userName: loginOr(e.BroadcasterUserLogin, e.BroadcasterUserName)}, true
 	case "stream.online":
 		var e helix.EventSubStreamOnlineEvent
 		_ = json.Unmarshal(vals.Event, &e)
-		return statusJob{kind: jobOnline, userID: e.BroadcasterUserID, userName: e.BroadcasterUserName}, true
+		return statusJob{kind: jobOnline, userID: e.BroadcasterUserID, userName: loginOr(e.BroadcasterUserLogin, e.BroadcasterUserName)}, true
 	case "channel.update":
 		var e helix.EventSubChannelUpdateEvent
 		_ = json.Unmarshal(vals.Event, &e)
 		return statusJob{
 			kind:     jobChannelUpdate,
 			userID:   e.BroadcasterUserID,
-			userName: e.BroadcasterUserName,
+			userName: loginOr(e.BroadcasterUserLogin, e.BroadcasterUserName),
 			game:     e.CategoryName,
 			language: e.Language,
 		}, true
@@ -662,9 +739,19 @@ func jobFromNotification(vals eventSubNotification) (statusJob, bool) {
 	return statusJob{}, false
 }
 
+// loginOr returns the Twitch login, or the display name if an event lacks
+// one. Rows are matched by login: display names can be localised (e.g.
+// CJK) and then never match the site.
+func loginOr(login, name string) string {
+	if login != "" {
+		return login
+	}
+	return name
+}
+
 // applyStatus writes one streamer's status through the normal
 // update/commit/push path. Callers must hold s.mutex (the worker does).
-func (s *StreamersRepo) applyStatus(streamer string, online bool, game, language string, tags []string) {
+func (s *StreamersRepo) applyStatus(streamer string, online bool, game, language string, tags []string) bool {
 	s.prelive, s.onlyIfPrelive = false, false
 	s.streamer = streamer
 	s.online = online
@@ -676,12 +763,23 @@ func (s *StreamersRepo) applyStatus(streamer string, online bool, game, language
 		s.language = ""
 		s.tags = nil
 	}
+	return s.commitAndPush()
+}
+
+// commitAndPush applies the prepared update and reports whether a change
+// was pushed. "No change needed" is not an error.
+func (s *StreamersRepo) commitAndPush() bool {
 	if err := updateMarkdown(s); err != nil {
-		log.Warnf("Repository doesn't need to be changed for %s", s.streamer)
-		return
+		var noChange *NoChangeNeededError
+		if errors.As(err, &noChange) {
+			log.Infof("no change needed for %s", s.streamer)
+		}
+		return false
 	}
-	updateRepo(s)
-	pushRepo(s)
+	if err := updateRepo(s); err != nil {
+		return false
+	}
+	return pushRepo(s)
 }
 
 // fetchStreamInfo returns the live stream for user_id. live is false when
@@ -715,7 +813,7 @@ func helixError(rc helix.ResponseCommon) error {
 
 // applyPrelive marks an active, offline streamer 🟡 "getting ready".
 // Callers must hold s.mutex.
-func (s *StreamersRepo) applyPrelive(streamer, game, language string, since time.Time) {
+func (s *StreamersRepo) applyPrelive(streamer, game, language string, since time.Time) bool {
 	s.streamer = streamer
 	s.online = false
 	s.prelive, s.onlyIfPrelive = true, false
@@ -724,24 +822,15 @@ func (s *StreamersRepo) applyPrelive(streamer, game, language string, since time
 	s.language = strings.ToUpper(language)
 	s.tags = nil
 	defer func() { s.prelive = false }()
-	if err := updateMarkdown(s); err != nil {
-		log.Infof("pre-live: no change for %s: %s", streamer, err)
-		return
-	}
-	updateRepo(s)
-	pushRepo(s)
+	return s.commitAndPush()
 }
 
 // clearPrelive turns a 🟡 row back to offline; other rows are untouched.
 // Callers must hold s.mutex.
-func (s *StreamersRepo) clearPrelive(streamer string) {
+func (s *StreamersRepo) clearPrelive(streamer string) bool {
 	s.streamer = streamer
 	s.online, s.prelive, s.onlyIfPrelive = false, false, true
 	s.game, s.language, s.tags = "", "", nil
 	defer func() { s.onlyIfPrelive = false }()
-	if err := updateMarkdown(s); err != nil {
-		return
-	}
-	updateRepo(s)
-	pushRepo(s)
+	return s.commitAndPush()
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -18,11 +19,15 @@ const (
 	jobReconcile     jobKind = "reconcile"
 	// jobSyncSubscriptions makes sure EventSub subscriptions exist.
 	jobSyncSubscriptions jobKind = "sync-subscriptions"
+	// jobFunc runs fn on the worker, e.g. token renewal, which must not
+	// race the Helix calls the worker makes.
+	jobFunc jobKind = "func"
 )
 
 // statusJob is one unit of work for the background worker.
 type statusJob struct {
 	kind     jobKind
+	fn       func()
 	userID   string
 	userName string
 	game     string
@@ -79,7 +84,7 @@ func (s *StreamersRepo) startWorker() {
 	}
 	go func() {
 		for job := range s.jobs {
-			s.process(job)
+			s.processSafely(job)
 			s.pending.Done()
 		}
 	}()
@@ -101,14 +106,37 @@ func (s *StreamersRepo) enqueue(job statusJob) bool {
 	}
 }
 
+// runInWorker runs fn on the worker goroutine and waits for it. It
+// reports false (without running fn) if the queue is full.
+func (s *StreamersRepo) runInWorker(fn func()) bool {
+	done := make(chan struct{})
+	if !s.enqueue(statusJob{kind: jobFunc, fn: func() { defer close(done); fn() }}) {
+		return false
+	}
+	<-done
+	return true
+}
+
 // waitIdle blocks until every queued job has been processed.
 func (s *StreamersRepo) waitIdle() { s.pending.Wait() }
+
+// processSafely runs one job, turning a panic into an error alert so one
+// bad event can't take down the process and every queued event with it.
+func (s *StreamersRepo) processSafely(job statusJob) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Errorf("panic while processing %s for %s: %v\n%s", job.kind, job.userName, r, debug.Stack())
+		}
+	}()
+	s.process(job)
+}
 
 func (s *StreamersRepo) process(job statusJob) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
-	if job.kind != jobReconcile {
+	switch job.kind {
+	case jobOnline, jobOffline, jobChannelUpdate:
 		s.noteEvent(job.userName)
 	}
 
@@ -132,7 +160,7 @@ func (s *StreamersRepo) process(job statusJob) {
 		}
 		name := job.userName
 		if name == "" {
-			name = stream.UserName
+			name = stream.UserLogin
 		}
 		// Streamers outside the infosec categories are shown as offline.
 		s.applyStatus(name, contains(VALID_GAMES, stream.GameName), stream.GameName, stream.Language, stream.Tags)
@@ -166,6 +194,9 @@ func (s *StreamersRepo) process(job statusJob) {
 
 	case jobSyncSubscriptions:
 		s.syncSubscriptions()
+
+	case jobFunc:
+		job.fn()
 	}
 }
 

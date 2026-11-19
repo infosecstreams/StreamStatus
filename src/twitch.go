@@ -72,14 +72,20 @@ func nextTokenRenewal(ttl time.Duration) time.Duration {
 	return d
 }
 
-// keepAppTokenFresh renews the app token before it expires, forever. A
-// failure is logged at Error level, which also alerts Discord.
-func keepAppTokenFresh(client *helix.Client, ttl time.Duration) {
+// keepAppTokenFresh renews the app token before it expires, forever. run
+// executes the renewal where it can't race other Helix calls (the worker);
+// it reports false if it couldn't. A failure is logged at Error level,
+// which also alerts Discord.
+func keepAppTokenFresh(client *helix.Client, ttl time.Duration, run func(func()) bool) {
 	wait := nextTokenRenewal(ttl)
 	for {
 		log.Infof("next Twitch app token renewal in %s", wait.Round(time.Minute))
 		time.Sleep(wait)
-		newTTL, err := renewAppToken(client)
+		var newTTL time.Duration
+		var err error
+		if !run(func() { newTTL, err = renewAppToken(client) }) {
+			err = errors.New("worker queue full")
+		}
 		if err != nil {
 			log.Errorf("renewing Twitch app token failed, retrying in %s: %s", tokenRenewRetry, err)
 			wait = tokenRenewRetry

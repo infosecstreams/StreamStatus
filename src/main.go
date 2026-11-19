@@ -60,8 +60,6 @@ func main() {
 		log.Fatalf("error: could not get a Twitch app access token: %s", err)
 	}
 
-	go keepAppTokenFresh(client, tokenTTL)
-
 	// Create StreamersRepo object
 	var repo = StreamersRepo{
 		auth:              auth,
@@ -90,6 +88,7 @@ func main() {
 	}
 	repo.alert("StreamStatus started", fmt.Sprintf("version %s, reconciling every %s", version, reconcileInterval))
 	repo.startWorker()
+	go keepAppTokenFresh(client, tokenTTL, repo.runInWorker)
 	repo.startReconciler(reconcileInterval)
 	log.Printf("reconciling live status every %s (inactive streamers: %v)", reconcileInterval, repo.reconcileInactive)
 	port := ":8080"
@@ -116,5 +115,11 @@ func main() {
 	} else {
 		log.Warn("no SS_CALLBACK_URL specified in environment, not managing EventSub subscriptions")
 	}
-	log.Fatal(http.Serve(ln, nil))
+	srv := &http.Server{
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+	log.Fatal(srv.Serve(ln))
 }
