@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/nicklaw5/helix/v2"
+	log "github.com/sirupsen/logrus"
 )
 
 // fakeStreams is a scripted stand-in for the Helix /streams endpoint.
@@ -400,5 +401,67 @@ func TestReconcileLeavesFreshEventsAlone(t *testing.T) {
 	s.reconcile()
 	if idx := gitOutput(t, origin, "show", "main:index.md"); !strings.Contains(idx, "🟢 | `alpha`") {
 		t.Errorf("after the grace period Helix should win:\n%s", idx)
+	}
+}
+
+// Accounts subscribed to EventSub but not on the site (removed or renamed)
+// must not produce a commit, a push or an error alert.
+func TestEventForStreamerNotOnSiteChangesNothing(t *testing.T) {
+	noSleep(t)
+	s, origin := newGitFixture(t, []string{offlineLine("alpha")}, []string{"`dormant` | [x](https://www.twitch.tv/dormant) &nbsp; |"}, "alpha,\n", "dormant,\n")
+	s.client = &fakeStreams{fn: func(int, *helix.StreamsParams) (*helix.StreamsResponse, error) {
+		return streamsResp(helix.Stream{UserLogin: "ckellerlive", UserName: "CKellerLive", GameName: "Just Chatting"}), nil
+	}}
+	alerts := &fakeAlerts{}
+	h := newAlertHook(alerts, time.Minute)
+	log.AddHook(h)
+	t.Cleanup(func() { log.StandardLogger().ReplaceHooks(log.LevelHooks{}) })
+	before := gitOutput(t, origin, "rev-parse", "main")
+
+	s.process(statusJob{kind: jobOnline, userID: "242020938", userName: "CKellerLive"})
+	s.process(statusJob{kind: jobOffline, userID: "242020938", userName: "CKellerLive"})
+	h.wg.Wait()
+
+	if gitOutput(t, origin, "rev-parse", "main") != before {
+		t.Errorf("site changed for an off-list streamer:\n%s", gitOutput(t, origin, "log", "--oneline", "-3", "main"))
+	}
+	if got := alerts.all(); len(got) != 0 {
+		t.Errorf("unexpected alerts: %+v", got)
+	}
+}
+
+// An offline event for an inactive streamer must not move them to the
+// active list (only someone shown live comes back).
+func TestOfflineEventDoesNotReactivate(t *testing.T) {
+	s, origin := newGitFixture(t, []string{offlineLine("alpha")}, []string{"`dormant` | [x](https://www.twitch.tv/dormant) &nbsp; |"}, "alpha,\n", "dormant,\n")
+	before := gitOutput(t, origin, "rev-parse", "main")
+	s.process(statusJob{kind: jobOffline, userID: "9", userName: "dormant"})
+	if gitOutput(t, origin, "rev-parse", "main") != before {
+		t.Errorf("offline event reactivated an inactive streamer:\n%s", gitOutput(t, origin, "show", "main:index.md"))
+	}
+}
+
+func TestUpdateStreamStatusRejectsMalformedPagesWithoutPanicking(t *testing.T) {
+	tests := []struct{ name, index, inactive string }{
+		{"index row without columns", "# S\n`alpha` with no table columns\n## Credits\n", ""},
+		{"inactive row without columns", "# S\n\n## Credits\n", "`alpha`"},
+		{"no Credits heading", "# S\n", "`alpha` | [x](https://www.twitch.tv/alpha) &nbsp; |"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &StreamersRepo{streamer: "alpha", online: true, indexMdText: tt.index, inactiveMdText: tt.inactive}
+			var err error
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						t.Fatalf("panicked: %v", r)
+					}
+				}()
+				err = s.updateStreamStatus()
+			}()
+			if err == nil {
+				t.Error("want an error for a malformed page")
+			}
+		})
 	}
 }

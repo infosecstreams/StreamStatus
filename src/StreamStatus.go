@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -307,8 +308,11 @@ func (s *StreamersRepo) updateStreamStatus() error {
 			if (s.prelive && status == "🟢") || (s.onlyIfPrelive && status != "🟡") {
 				return &NoChangeNeededError{err: fmt.Sprintf("no change needed for: %s (row is %q)", s.streamer, status)}
 			}
-			otherInfo := strings.Split(v, "|")[2]
-			newLine := s.generateStreamerLine(otherInfo)
+			cols := strings.Split(v, "|")
+			if len(cols) < 3 {
+				return fmt.Errorf("malformed index.md row for %s: %q", s.streamer, v)
+			}
+			newLine := s.generateStreamerLine(cols[2])
 			if newLine != v {
 				indexMdLines[i] = newLine
 			} else {
@@ -325,21 +329,40 @@ func (s *StreamersRepo) updateStreamStatus() error {
 		return &NoChangeNeededError{err: fmt.Sprintf("no change needed for: %s (not an active streamer)", s.streamer)}
 	}
 	if !streamerFound {
+		// Only someone being shown live comes back from inactive.md; an
+		// offline event (or a live stream outside the infosec categories)
+		// leaves an inactive streamer where they are.
+		if !s.online {
+			return &NoChangeNeededError{err: fmt.Sprintf("no change needed for: %s (not an active streamer, online: false)", s.streamer)}
+		}
 		log.Warnf("streamer not found in index.md, checking inactive.md for %s", s.streamer)
+		reactivated := false
 		for i, v := range inactiveMdLines {
-			if strings.Contains(strings.ToLower(v), streamerFormatted) {
-				// Remove the streamer from the inactive list.
-				inactiveMdLines = append(inactiveMdLines[:i], inactiveMdLines[i+1:]...)
-				// Append to indexMdLines after the last streamer, not last line.
-				otherInfo := strings.Split(v, "|")[1]
-				newLine := s.generateStreamerLine(otherInfo)
-				// Find the line before 'Credits' in the indexMdLines.
-				end := lineIndex(indexMdLines, "Credits") - 1
-				// Insert newLine before 'end' in the indexMdLines.
-				indexMdLines = append(indexMdLines[:end], append([]string{newLine}, indexMdLines[end:]...)...)
-				s.reactivated = true
-				break
+			if !strings.Contains(strings.ToLower(v), streamerFormatted) {
+				continue
 			}
+			cols := strings.Split(v, "|")
+			if len(cols) < 2 {
+				return fmt.Errorf("malformed inactive.md row for %s: %q", s.streamer, v)
+			}
+			// Insert before the blank line that precedes the Credits heading,
+			// i.e. after the last streamer row.
+			credits := lineIndex(indexMdLines, "Credits")
+			if credits < 1 {
+				return fmt.Errorf("index.md has no Credits heading; can't place %s", s.streamer)
+			}
+			end := credits - 1
+			newLine := s.generateStreamerLine(cols[1])
+			inactiveMdLines = append(inactiveMdLines[:i], inactiveMdLines[i+1:]...)
+			indexMdLines = append(indexMdLines[:end], append([]string{newLine}, indexMdLines[end:]...)...)
+			s.reactivated = true
+			reactivated = true
+			break
+		}
+		if !reactivated {
+			// Not on the site at all (e.g. an account subscribed to EventSub
+			// but removed from the lists, or a renamed login): nothing to do.
+			return &NoChangeNeededError{err: fmt.Sprintf("no change needed for: %s (not on the site)", s.streamer)}
 		}
 	}
 	s.indexMdText = strings.Join(indexMdLines, "\n")
@@ -432,10 +455,11 @@ func updateMarkdown(repo *StreamersRepo) error {
 
 	err = repo.updateStreamStatus()
 	if err != nil {
-		if fmt.Sprintf("%T", err) == "*main.NoChangeNeededError" {
-			return err
+		var noChange *NoChangeNeededError
+		if !errors.As(err, &noChange) {
+			log.Errorf("error updating status: %s", err)
 		}
-		log.Printf("error updating status: %s", err)
+		return err
 	}
 	err = repo.writefile(repo.indexMdText, repo.inactiveMdText)
 	if err != nil {
