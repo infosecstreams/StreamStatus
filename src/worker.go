@@ -221,6 +221,7 @@ func (s *StreamersRepo) process(job statusJob) {
 
 	case jobStats:
 		if s.live != nil {
+			s.live.importBackfillFile()
 			s.live.buildStats(timeNow())
 		}
 

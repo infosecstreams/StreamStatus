@@ -105,6 +105,10 @@ func main() {
 		repo.live = live
 		repo.users = client
 		repo.follows = client
+		live.backfillPath = os.Getenv("SS_BACKFILL_PATH")
+		if live.backfillPath == "" {
+			live.backfillPath = defaultBackfillPath(dbPath)
+		}
 	}
 
 	reconcileInterval := defaultReconcileInterval

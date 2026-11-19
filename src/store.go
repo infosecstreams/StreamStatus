@@ -88,6 +88,10 @@ var migrations = []string{
 	CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 	INSERT INTO meta (key, value)
 		SELECT 'recording_since', CAST(COALESCE(MIN(started_at), CAST(strftime('%s', 'now') AS INTEGER)) AS TEXT) FROM sessions;`,
+
+	// 3: where a session came from: "live" (recorded by the bot) or
+	// "backfill" (imported from a tracker's history, see backfill.go).
+	`ALTER TABLE sessions ADD COLUMN source TEXT NOT NULL DEFAULT 'live';`,
 }
 
 // openStore opens (creating if needed) the database at path and brings
@@ -451,7 +455,7 @@ func streamedHours(segs []segment, now time.Time, window time.Duration) map[stri
 	from := now.Add(-window)
 	secs := map[string]float64{}
 	for _, g := range segs {
-		if !contains(VALID_GAMES, g.category) {
+		if !countsAsInfosec(g.category) {
 			continue
 		}
 		start, end := g.start, g.end

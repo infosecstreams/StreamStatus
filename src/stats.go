@@ -640,7 +640,7 @@ func computeStreamerStats(id string, d *statsData, now time.Time) streamerStats 
 					catName[key] = g.category
 				}
 			}
-			if !contains(VALID_GAMES, g.category) || !gEnd.After(g.start) {
+			if !countsAsInfosec(g.category) || !gEnd.After(g.start) {
 				continue
 			}
 			validAny = true
@@ -693,7 +693,7 @@ func computeStreamerStats(id string, d *statsData, now time.Time) streamerStats 
 			if p.viewers > sessPeak {
 				sessPeak = p.viewers
 			}
-			if !contains(VALID_GAMES, p.category) {
+			if !countsAsInfosec(p.category) {
 				continue
 			}
 			if o := overlap(p.from, p.to, w30, now).Seconds(); o > 0 {
@@ -725,7 +725,7 @@ func computeStreamerStats(id string, d *statsData, now time.Time) streamerStats 
 	}
 	out.Categories30d = []categoryHours{}
 	for key, secs := range catSecs {
-		out.Categories30d = append(out.Categories30d, categoryHours{Category: catName[key], Hours: round1(secs.Hours()), Infosec: contains(VALID_GAMES, key)})
+		out.Categories30d = append(out.Categories30d, categoryHours{Category: catName[key], Hours: round1(secs.Hours()), Infosec: countsAsInfosec(key)})
 	}
 	sort.Slice(out.Categories30d, func(i, j int) bool {
 		a, b := out.Categories30d[i], out.Categories30d[j]

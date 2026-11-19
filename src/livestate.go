@@ -78,6 +78,11 @@ type liveState struct {
 	statsSnap  atomic.Pointer[statsDocs]
 	lastSample map[string]time.Time
 	lastTitle  map[string]string
+
+	// Backfill (backfill.go): tracker history to import, and the
+	// modification time of the last import.
+	backfillPath  string
+	backfillMtime time.Time
 }
 
 // newLiveState loads the known users from db.
