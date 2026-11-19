@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/http"
@@ -9,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	httpauth "github.com/go-git/go-git/v5/plumbing/transport/http"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -42,13 +42,16 @@ func main() {
 	activeCsvPath := repoPath + "/streamers.csv"
 	inactiveCsvPath := repoPath + "/inactive_streamers.csv"
 
-	// Setup auth.
-	if len(os.Getenv("SS_USERNAME")) == 0 || len(os.Getenv("SS_TOKEN")) == 0 || len(os.Getenv("SS_SECRETKEY")) == 0 {
-		log.Fatalln("error: no SS_USERNAME and/or SS_TOKEN and/or SS_SECRETKEY specified in environment!")
+	// Setup auth: a GitHub App installation token, or SS_USERNAME/SS_TOKEN.
+	if len(os.Getenv("SS_SECRETKEY")) == 0 {
+		log.Fatalln("error: no SS_SECRETKEY specified in environment!")
 	}
-	auth := &httpauth.BasicAuth{
-		Username: os.Getenv("SS_USERNAME"),
-		Password: os.Getenv("SS_TOKEN"),
+	auth, ghApp, ghTokenExpiry, err := gitAuthFromEnv(os.Getenv, repoPath)
+	if err != nil {
+		log.Fatalf("error: %s", err)
+	}
+	if ghApp != nil {
+		log.Infof("pushing as GitHub App %s (installation %s)", ghApp.appID, ghApp.installationID)
 	}
 
 	if len(os.Getenv("TW_CLIENT_ID")) == 0 || len(os.Getenv("TW_CLIENT_SECRET")) == 0 {
@@ -88,6 +91,9 @@ func main() {
 	}
 	repo.alert("StreamStatus started", fmt.Sprintf("version %s, reconciling every %s", version, reconcileInterval))
 	repo.startWorker()
+	if ghApp != nil {
+		go keepGitTokenFresh(context.Background(), auth, ghApp, ghTokenExpiry, repo.runInWorker)
+	}
 	go keepAppTokenFresh(client, tokenTTL, repo.runInWorker)
 	repo.startReconciler(reconcileInterval)
 	log.Printf("reconciling live status every %s (inactive streamers: %v)", reconcileInterval, repo.reconcileInactive)
