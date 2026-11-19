@@ -21,6 +21,10 @@ const (
 	jobSyncSubscriptions jobKind = "sync-subscriptions"
 	// jobRefreshLive refreshes viewers and titles of live streamers.
 	jobRefreshLive jobKind = "refresh-live"
+	// jobStats rebuilds the stats documents; jobFollowers fetches a batch
+	// of daily follower totals.
+	jobStats     jobKind = "stats"
+	jobFollowers jobKind = "followers"
 	// jobFunc runs fn on the worker, e.g. token renewal, which must not
 	// race the Helix calls the worker makes.
 	jobFunc jobKind = "func"
@@ -214,6 +218,14 @@ func (s *StreamersRepo) process(job statusJob) {
 
 	case jobRefreshLive:
 		s.refreshLive()
+
+	case jobStats:
+		if s.live != nil {
+			s.live.buildStats(timeNow())
+		}
+
+	case jobFollowers:
+		s.fetchFollowers()
 
 	case jobFunc:
 		job.fn()

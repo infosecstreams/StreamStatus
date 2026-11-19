@@ -73,6 +73,11 @@ type liveState struct {
 
 	snap        atomic.Pointer[apiDoc]
 	lastPayload []byte
+
+	// Statistics (stats.go).
+	statsSnap  atomic.Pointer[statsDocs]
+	lastSample map[string]time.Time
+	lastTitle  map[string]string
 }
 
 // newLiveState loads the known users from db.
@@ -162,6 +167,8 @@ func (l *liveState) online(id string, stream helix.Stream, now time.Time) {
 	if contains(VALID_GAMES, stream.GameName) {
 		st.status = statusOnline
 	}
+	l.recordSample(id, now, stream.ViewerCount, stream.GameName)
+	l.recordTitle(id, now, stream.Title, stream.GameName)
 }
 
 // offline records that id's stream ended. missed means it was noticed by
@@ -198,6 +205,7 @@ func (l *liveState) preliveUpdate(id, category, title, language string, now time
 		*st = streamerState{status: statusOffline, lastEvent: st.lastEvent}
 		return
 	}
+	l.recordTitle(id, now, title, category)
 	st.status = statusPrelive
 	st.preliveSince = now.UTC()
 	st.category, st.title, st.language = category, title, strings.ToLower(language)

@@ -94,6 +94,8 @@ type StreamersRepo struct {
 	live *liveState
 	// users maps roster logins to Twitch user IDs for live state.
 	users usersClient
+	// follows fetches daily follower totals for stats.
+	follows followersClient
 	// statusCommitsOff (SS_COMMIT_STATUS=false) stops committing status
 	// changes to the site repo. Roster moves (reactivating an inactive
 	// streamer who went live) are still committed.

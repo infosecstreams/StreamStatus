@@ -233,3 +233,31 @@ func TestUserRenameKeepsOldLogin(t *testing.T) {
 		t.Errorf("byLogin = %v", byLogin)
 	}
 }
+
+// A database created by migration 1 upgrades in place, and recording_since
+// goes back to its first session.
+func TestMigrateFromV1(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.db")
+	saved := migrations
+	migrations = saved[:1]
+	st, err := openStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustSeen(t, st, "1", t0, "Just Chatting", t0)
+	st.close()
+	migrations = saved
+
+	st, err = openStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.close()
+	since, err := st.recordingSince()
+	if err != nil || !since.Equal(t0) {
+		t.Errorf("recording since = %s, %v; want %s", since, err, t0)
+	}
+	if err := st.addViewerSample("1", t0, 5, "Just Chatting"); err != nil {
+		t.Errorf("v2 table missing: %s", err)
+	}
+}

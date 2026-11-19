@@ -104,6 +104,7 @@ func main() {
 		log.Printf("stream history database: %s", dbPath)
 		repo.live = live
 		repo.users = client
+		repo.follows = client
 	}
 
 	reconcileInterval := defaultReconcileInterval
@@ -121,6 +122,7 @@ func main() {
 	log.Printf("reconciling live status every %s (inactive streamers: %v)", reconcileInterval, repo.reconcileInactive)
 	if repo.live != nil {
 		repo.startLiveRefresh(liveRefreshInterval)
+		repo.startStatsJobs(statsInterval)
 	}
 	port := ":8080"
 	// Google Cloud Run defaults to 8080. Their platform

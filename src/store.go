@@ -59,6 +59,35 @@ var migrations = []string{
 	);
 	CREATE INDEX segments_session ON segments (session_id);
 	CREATE INDEX segments_ended ON segments (ended_at);`,
+
+	// 2: statistics. Viewer counts sampled while live, a daily follower
+	// total, title changes, and when recording started.
+	`CREATE TABLE viewer_samples (
+		user_id  TEXT NOT NULL,
+		at       INTEGER NOT NULL,
+		viewers  INTEGER NOT NULL,
+		category TEXT NOT NULL,
+		PRIMARY KEY (user_id, at)
+	);
+	CREATE INDEX viewer_samples_at ON viewer_samples (at);
+	CREATE TABLE follower_counts (
+		user_id TEXT NOT NULL,
+		day     TEXT NOT NULL,
+		at      INTEGER NOT NULL,
+		total   INTEGER NOT NULL,
+		PRIMARY KEY (user_id, day)
+	);
+	CREATE TABLE titles (
+		id       INTEGER PRIMARY KEY,
+		user_id  TEXT NOT NULL,
+		at       INTEGER NOT NULL,
+		title    TEXT NOT NULL,
+		category TEXT NOT NULL DEFAULT ''
+	);
+	CREATE INDEX titles_user ON titles (user_id, at);
+	CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+	INSERT INTO meta (key, value)
+		SELECT 'recording_since', CAST(COALESCE(MIN(started_at), CAST(strftime('%s', 'now') AS INTEGER)) AS TEXT) FROM sessions;`,
 }
 
 // openStore opens (creating if needed) the database at path and brings
