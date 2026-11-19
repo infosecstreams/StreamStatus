@@ -9,13 +9,15 @@ is applied yet.
 |---|---|
 | `measure.sh` | Read-only before/after probe: TLS, ALPN, compression, cache headers, 103, HTTP/3, cold TTFB, 304s |
 | `measurements/` | The 2026-11-19 baseline (site, p. host, mcmaster.com and CDN references) |
-| `caddy/Caddyfile` | Caddy for p.infosecstreams.com: Plausible, `/webhook/callbacks`, the bot's `/api/*.json` |
+| `caddy/Caddyfile` | Caddy for p.infosecstreams.com: Plausible (incl. its `/api/*` and `/live/*`), `/webhook/callbacks`, the bot's `/streamstatus/*`, backspin on :8080 |
+| `caddy/site.caddy` | Option (a) only: the Astro site served from the box (precompressed br/zstd), tested |
+| `HOSTING-AND-COST.md` | Site hosting with GitHub Pages dropped, the box's cost and cheaper options, and the "newer than Caddy?" survey |
 | `docker-compose.caddy.yml` | The `caddy` service for the host's compose file |
 | `CUTOVER-caddy.md` | Cutover runbook: certificate obtained before switching, 2–4 s port hand-off, rollback |
 | `terraform/iss-sg-quic.tf.snippet` | Security group: UDP 443 for HTTP/3 |
-| `nginx-streamstatus-api.conf` | **Only if Caddy is not adopted:** a corrected `/api/` location that leaves Plausible's `/api/` alone |
-| `test/run.sh` | Local test of the Caddyfile against fake upstreams (28 checks, docker) |
-| `site/` | Cloudflare migration for the Astro site: `_headers`, `wrangler.jsonc`, a workflow job, `MIGRATION-cloudflare.md` |
+| `nginx-streamstatus-api.conf` | **Only if Caddy is not adopted:** `location /streamstatus/` for the deployed nginx config, replacing ci-deploy's `location /api/` |
+| `test/run.sh` | Local test of the Caddyfile against fake upstreams (32 checks, docker) |
+| `site/` | Cloudflare migration for the Astro site: `_headers`, `wrangler.jsonc`, a workflow job, `MIGRATION-cloudflare.md`; `precompress.sh` for option (a) |
 
 ## Baseline (2026-11-19, from Rocklin CA)
 
@@ -67,21 +69,23 @@ trip. This is a small bot change (pure-Go `andybalholm/brotli`, `Vary`
 already set), proposed as a follow-up for bot-live-data. Caddy then passes
 `br` through with no config change.
 
-**Path collision found.** Plausible serves its own `/api/event`
-(every pageview), `/api/health`, `/api/stats/<domain>/...` and `/api/v1|v2`
-on the same host. The ci-deploy-security nginx snippet's `location /api/` would
-send all of them to the bot, and analytics would silently stop. The Caddyfile
-(and `nginx-streamstatus-api.conf`) routes only the bot's shapes:
-`/api/<name>.json|.ics` and `/api/stats/<id|login>.json`. Future bot
-endpoints with those shapes route automatically. Longer term, a separate
-`api.infosecstreams.com` would remove the coupling (a contract change for
-the coordinator).
+**Routing.** Plausible CE owns `/api/*` (`POST /api/event` on every
+pageview, `/api/stats/<domain>/...`, `/api/v1|v2`) and `/live/*` (LiveView
+`/live/websocket`, `/live/longpoll`) on the same host. The bot API therefore
+lives under `/streamstatus/` (CONTRACT.md). The Caddyfile routes
+`/streamstatus/*` and `/webhook/callbacks` to the bot and everything else to
+Plausible; websocket upgrades need no extra config. The ci-deploy-security
+snippet's `location /api/` must not be deployed: it would break analytics.
 
 Headers added on top of the bot's: `stale-while-revalidate=<max-age>,
 stale-if-error=300` on the API, `Cross-Origin-Resource-Policy: cross-origin`,
 HSTS, nosniff, Referrer-Policy, and no `Server` header.
 
 ## Recommendation 2: the site moves to Cloudflare (Free): DNS plus Workers static assets
+
+GitHub Pages can be dropped entirely. `HOSTING-AND-COST.md` compares serving
+the site from the box itself (option a, configs ready as the fallback), the
+box behind a CDN (b), and a CDN-native host (c, this recommendation).
 
 | | GitHub Pages (today) | Cloudflare proxy in front of Pages | **Cloudflare Workers static assets** | Netlify (free credits) | Bunny CDN pull zone |
 |---|---|---|---|---|---|
@@ -120,7 +124,7 @@ nameserver move, plus a purge call per deploy.
 | p. TLS + first byte | h2, RSA-4096 cert, 271 ms | h3 (−1 RTT ≈ 50 ms from California, ~150 ms from Europe), ECDSA cert, 0-RTT on resumption |
 | Plausible script.js | 3005 B (uncompressed) | 1324 B gzip |
 | Plausible dashboard HTML | 15.7 KB | 3.1 KB |
-| status.json (349 streamers) | n/a yet | 6.2 KB gzip (bot); 5.0 KB once the bot precomputes brotli |
+| `/streamstatus/status.json` (349 streamers) | n/a yet | 6.2 KB gzip (bot); 5.0 KB once the bot precomputes brotli |
 
 These are estimates from the measured components (reference CDN timings,
 compression of our real payloads). Re-run `measure.sh` after each phase to

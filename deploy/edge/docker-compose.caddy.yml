@@ -36,6 +36,8 @@ services:
       - caddy-data:/data
       - caddy-config:/config
       - /home/ec2-user/backspin:/srv/backspin:ro
+      # Option (a) only (site served from this box, caddy/site.caddy):
+      # - ./site:/srv/site:ro
     # Measured at ~27 MiB RSS idle in the local test; nginx was ~10 MiB.
     mem_limit: 128m
     logging:
