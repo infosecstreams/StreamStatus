@@ -31,7 +31,11 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: src/go.mod
+          # The release image builds with golang:latest, so test and scan
+          # with the newest stable Go too (go.mod's "go 1.27.0" is only the
+          # minimum; that exact release has known stdlib vulnerabilities).
+          go-version: stable
+          check-latest: true
           # Dependencies are vendored; there is no module cache to restore.
           cache: false
 
