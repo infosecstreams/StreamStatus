@@ -98,6 +98,10 @@ func main() {
 	if err := repo.schedule.adherence.loadHistory(scheduleHistoryPath()); err != nil {
 		log.Warnf("schedule track record: %s", err)
 	}
+	if err := repo.schedule.history.load(streamHistoryPath()); err != nil {
+		log.Warnf("stream history: %s", err)
+	}
+	repo.startStreamHistory()
 	repo.startScheduleRefresher(scheduleRefreshInterval)
 	for path, h := range repo.scheduleHandlers() {
 		http.HandleFunc(path, h)

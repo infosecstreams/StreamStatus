@@ -55,7 +55,10 @@ func (r *adherenceRig) run(until time.Time) {
 	}
 }
 
-func (r *adherenceRig) record() (int, int) { return r.s.scheduleTrackRecord("1") }
+func (r *adherenceRig) record() (int, int) {
+	tr := r.s.scheduleTrackRecord("1")
+	return tr.Kept, tr.Total
+}
 
 func at(d time.Duration, id string) scheduledSegment {
 	return scheduledSegment{ID: id, Start: schedNow.Add(d), End: schedNow.Add(d + 2*time.Hour)}
@@ -179,8 +182,8 @@ func TestTrackRecordTrimAndPersist(t *testing.T) {
 	if err := b.loadHistory(path); err != nil {
 		t.Fatal(err)
 	}
-	if k2, n2 := b.trackRecord("1", schedNow); k2 != k || n2 != n {
-		t.Errorf("reloaded %d/%d, want %d/%d", k2, n2, k, n)
+	if tr := b.trackRecord("1", schedNow); tr.Kept != k || tr.Total != n {
+		t.Errorf("reloaded %+v, want %d/%d", tr, k, n)
 	}
 	if err := newAdherenceTracker().loadHistory("/nonexistent-dir/x.json"); err == nil {
 		t.Error("missing directory should be reported")

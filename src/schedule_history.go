@@ -48,6 +48,9 @@ type adherenceOutcome struct {
 	Start     time.Time `json:"start"`
 	Kept      bool      `json:"kept"`
 	LiveAt    time.Time `json:"live_at,omitzero"`
+	// Estimated outcomes are projected from stream history (see
+	// stream_history.go), not observed.
+	Estimated bool `json:"estimated,omitempty"`
 }
 
 // watchedSegment is a segment whose window is open. Worker only.
@@ -61,15 +64,16 @@ type watchedSegment struct {
 // adherenceTracker holds every streamer's outcomes. mu guards outcomes,
 // which handlers read; watching is worker only.
 type adherenceTracker struct {
-	mu       sync.RWMutex
-	outcomes map[string][]adherenceOutcome // by broadcaster ID, oldest first
+	mu        sync.RWMutex
+	outcomes  map[string][]adherenceOutcome // by broadcaster ID, oldest first
+	estimated map[string][]adherenceOutcome // derived; not saved
 
 	watching map[string]*watchedSegment // by segmentKey
 	path     string                     // JSON file; "" keeps history in memory
 }
 
 func newAdherenceTracker() *adherenceTracker {
-	return &adherenceTracker{outcomes: map[string][]adherenceOutcome{}, watching: map[string]*watchedSegment{}}
+	return &adherenceTracker{outcomes: map[string][]adherenceOutcome{}, estimated: map[string][]adherenceOutcome{}, watching: map[string]*watchedSegment{}}
 }
 
 func segmentKey(g scheduledSegment) string { return g.ID + "@" + g.Start.UTC().Format(time.RFC3339) }
@@ -176,28 +180,63 @@ func (a *adherenceTracker) recorded(g scheduledSegment) bool {
 	return false
 }
 
+// setEstimated replaces the estimated outcomes.
+func (a *adherenceTracker) setEstimated(est map[string][]adherenceOutcome) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.estimated = est
+}
+
 // trackRecord returns how many of a streamer's recent scheduled streams
-// they kept, out of how many were judged.
-func (a *adherenceTracker) trackRecord(id string, now time.Time) (kept, total int) {
+// they kept, out of how many were judged: the newest adherenceKeep
+// outcomes within adherenceMaxAge, observed ones replacing estimates of
+// the same slot.
+func (a *adherenceTracker) trackRecord(id string, now time.Time) trackRecordJSON {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
-	for _, o := range a.outcomes[id] {
-		if now.Sub(o.Start) > adherenceMaxAge {
-			continue
+	obs := a.outcomes[id]
+	all := append([]adherenceOutcome{}, obs...)
+	for _, e := range a.estimated[id] {
+		dup := false
+		for _, o := range obs {
+			if d := o.Start.Sub(e.Start); d < adherenceTolerance && d > -adherenceTolerance {
+				dup = true
+				break
+			}
 		}
-		total++
-		if o.Kept {
-			kept++
+		if !dup {
+			all = append(all, e)
 		}
 	}
-	return kept, total
+	sort.SliceStable(all, func(i, j int) bool { return all[i].Start.Before(all[j].Start) })
+	var recent []adherenceOutcome
+	for _, o := range all {
+		if now.Sub(o.Start) <= adherenceMaxAge {
+			recent = append(recent, o)
+		}
+	}
+	if len(recent) > adherenceKeep {
+		recent = recent[len(recent)-adherenceKeep:]
+	}
+	var tr trackRecordJSON
+	for _, o := range recent {
+		tr.Total++
+		if o.Kept {
+			tr.Kept++
+		}
+		if o.Estimated {
+			tr.Estimated++
+		}
+	}
+	return tr
 }
 
 // scheduleTrackRecord returns how many of streamer id's recent scheduled
-// streams (up to adherenceKeep in the last 90 days) they went live for.
-func (s *StreamersRepo) scheduleTrackRecord(id string) (kept, total int) {
+// streams (up to adherenceKeep in the last 90 days) they went live for, and
+// how many of those were estimated from stream history.
+func (s *StreamersRepo) scheduleTrackRecord(id string) trackRecordJSON {
 	if s.schedule == nil || s.schedule.adherence == nil {
-		return 0, 0
+		return trackRecordJSON{}
 	}
 	return s.schedule.adherence.trackRecord(id, timeNow())
 }
@@ -316,6 +355,7 @@ func (s *StreamersRepo) trackScheduleAdherence() {
 
 // trackRecordJSON is a streamer's track record as served in schedule.json.
 type trackRecordJSON struct {
-	Kept  int `json:"kept"`
-	Total int `json:"total"`
+	Kept      int `json:"kept"`
+	Total     int `json:"total"`
+	Estimated int `json:"estimated,omitempty"` // of Total, projected from stream history
 }

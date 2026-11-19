@@ -79,6 +79,7 @@ type scheduledSegment struct {
 	Category      string
 	Canceled      bool // the streamer canceled this occurrence
 	Vacation      bool // it falls in the streamer's schedule vacation
+	Recurring     bool // part of a weekly recurring slot
 }
 
 // off reports whether the segment won't happen.
@@ -109,6 +110,8 @@ type scheduleState struct {
 
 	// adherence is each streamer's track record of keeping their schedule.
 	adherence *adherenceTracker
+	// history is each streamer's recent streams from third-party trackers.
+	history *streamHistory
 
 	// preliveDone remembers segments already turned into a 🟡 marker (or
 	// skipped), so each scheduled start triggers at most one site commit.
@@ -123,6 +126,7 @@ func newScheduleState(client scheduleClient) *scheduleState {
 		byID:        map[string]*broadcasterSchedule{},
 		preliveDone: map[string]time.Time{},
 		adherence:   newAdherenceTracker(),
+		history:     newStreamHistory(defaultHistorySources()...),
 	}
 }
 
@@ -250,6 +254,7 @@ func (s *StreamersRepo) refreshSchedules(run func(func()) bool) {
 	if len(alerting) > 0 {
 		log.Errorf("schedule: fetch keeps failing for %d streamer(s), serving their last schedule: %s", len(alerting), strings.Join(alerting, "; "))
 	}
+	s.updateEstimates()
 }
 
 func (st *scheduleState) lastRefresh() string {
@@ -358,6 +363,7 @@ func fetchSchedule(c scheduleClient, id string, now time.Time) ([]scheduledSegme
 				End:           end,
 				Title:         strings.TrimSpace(g.Title),
 				Category:      g.Category.Name,
+				Recurring:     g.IsRecurring,
 				Canceled:      g.CanceledUntil != "",
 				Vacation: !vac.StartTime.IsZero() && !vac.EndTime.IsZero() &&
 					!start.Before(vac.StartTime.Time) && start.Before(vac.EndTime.Time),
@@ -595,6 +601,24 @@ type scheduleSegmentJSON struct {
 type scheduleJSON struct {
 	GeneratedAt string                `json:"generated_at"`
 	Segments    []scheduleSegmentJSON `json:"segments"`
+	// Habits are the weekly UTC slots streamers usually stream in, from
+	// 90 days of stream history, whether or not they publish a schedule.
+	Habits []habitsJSON `json:"habits"`
+}
+
+type habitsJSON struct {
+	ID          string          `json:"id"`
+	Login       string          `json:"login"`
+	DisplayName string          `json:"display_name"`
+	Next        string          `json:"next,omitempty"`
+	Slots       []habitSlotJSON `json:"slots"`
+}
+
+type habitSlotJSON struct {
+	Weekday string `json:"weekday"` // "Tuesday"
+	Time    string `json:"time"`    // "18:00", UTC
+	Weeks   int    `json:"weeks"`   // weeks they streamed around then
+	Of      int    `json:"of"`      // weeks of history
 }
 
 // scheduleRequest validates the method and ?login= of a schedule request
@@ -640,18 +664,47 @@ func (s *StreamersRepo) scheduleRequest(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *StreamersRepo) serveScheduleJSON(w http.ResponseWriter, r *http.Request) {
-	segs, roster, generated, _, ok := s.scheduleRequest(w, r)
+	segs, roster, generated, login, ok := s.scheduleRequest(w, r)
 	if !ok {
 		return
 	}
-	writeScheduleBody(w, r, "application/json; charset=utf-8", renderScheduleJSON(segs, roster, generated, s.scheduleTrackRecord))
+	out := renderScheduleJSON(segs, roster, generated, s.scheduleTrackRecord)
+	out.Habits = s.habitsJSON(roster, login)
+	b, _ := json.Marshal(out)
+	writeScheduleBody(w, r, "application/json; charset=utf-8", append(b, '\n'))
 }
 
-// trackRecordFunc returns a streamer's kept/total scheduled streams.
-type trackRecordFunc func(id string) (kept, total int)
+// habitsJSON lists the habits of every roster streamer (or just login)
+// who has any, by login.
+func (s *StreamersRepo) habitsJSON(roster map[string]rosterEntry, login string) []habitsJSON {
+	out := []habitsJSON{}
+	now := timeNow()
+	for id, e := range roster {
+		if login != "" && e.login != login {
+			continue
+		}
+		slots := s.streamHabits(id)
+		if len(slots) == 0 {
+			continue
+		}
+		h := habitsJSON{ID: id, Login: e.login, DisplayName: e.displayName}
+		if next, ok := nextHabitAt(slots, now); ok {
+			h.Next = next.Format(time.RFC3339)
+		}
+		for _, sl := range slots {
+			h.Slots = append(h.Slots, habitSlotJSON{Weekday: sl.Weekday.String(), Time: fmt.Sprintf("%02d:%02d", sl.Minute/60, sl.Minute%60), Weeks: sl.Weeks, Of: sl.Of})
+		}
+		out = append(out, h)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Login < out[j].Login })
+	return out
+}
 
-func renderScheduleJSON(segs []scheduledSegment, roster map[string]rosterEntry, generated time.Time, record trackRecordFunc) []byte {
-	out := scheduleJSON{GeneratedAt: generated.UTC().Format(time.RFC3339), Segments: []scheduleSegmentJSON{}}
+// trackRecordFunc returns a streamer's track record.
+type trackRecordFunc func(id string) trackRecordJSON
+
+func renderScheduleJSON(segs []scheduledSegment, roster map[string]rosterEntry, generated time.Time, record trackRecordFunc) scheduleJSON {
+	out := scheduleJSON{GeneratedAt: generated.UTC().Format(time.RFC3339), Segments: []scheduleSegmentJSON{}, Habits: []habitsJSON{}}
 	for _, g := range segs {
 		e := roster[g.BroadcasterID]
 		j := scheduleSegmentJSON{
@@ -668,13 +721,12 @@ func renderScheduleJSON(segs []scheduledSegment, roster map[string]rosterEntry, 
 		if !g.End.IsZero() {
 			j.End = g.End.UTC().Format(time.RFC3339)
 		}
-		if kept, total := record(g.BroadcasterID); total > 0 {
-			j.TrackRecord = &trackRecordJSON{Kept: kept, Total: total}
+		if tr := record(g.BroadcasterID); tr.Total > 0 {
+			j.TrackRecord = &tr
 		}
 		out.Segments = append(out.Segments, j)
 	}
-	b, _ := json.Marshal(out)
-	return append(b, '\n')
+	return out
 }
 
 func (s *StreamersRepo) serveScheduleICS(w http.ResponseWriter, r *http.Request) {
@@ -725,8 +777,11 @@ func renderScheduleICS(segs []scheduledSegment, roster map[string]rosterEntry, s
 		if g.Category != "" {
 			desc = "Category: " + g.Category + "\n" + url
 		}
-		if kept, total := record(g.BroadcasterID); total > 0 {
-			desc += fmt.Sprintf("\nWent live for %d of their last %d scheduled streams", kept, total)
+		if tr := record(g.BroadcasterID); tr.Total > 0 {
+			desc += fmt.Sprintf("\nWent live for %d of their last %d scheduled streams", tr.Kept, tr.Total)
+			if tr.Estimated > 0 {
+				desc += fmt.Sprintf(" (%d estimated from stream history)", tr.Estimated)
+			}
 		}
 		if g.Vacation {
 			desc = "On vacation\n" + desc
