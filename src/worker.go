@@ -1,8 +1,6 @@
 package main
 
 import (
-	"context"
-	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +16,8 @@ const (
 	jobOffline       jobKind = "stream.offline"
 	jobChannelUpdate jobKind = "channel.update"
 	jobReconcile     jobKind = "reconcile"
+	// jobSyncSubscriptions makes sure EventSub subscriptions exist.
+	jobSyncSubscriptions jobKind = "sync-subscriptions"
 )
 
 // statusJob is one unit of work for the background worker.
@@ -121,9 +121,7 @@ func (s *StreamersRepo) process(job statusJob) {
 		log.Printf("processing online event for: %s (%s)", job.userName, job.userID)
 		stream, live, err := s.waitForLiveStream(job.userID)
 		if err != nil {
-			msg := fmt.Sprintf("Error fetching stream info for %s (uid: %s). error: %s", job.userName, job.userID, err)
-			log.Error(msg)
-			s.notify("failed to get stream info", msg)
+			log.Errorf("Error fetching stream info for %s (uid: %s). error: %s", job.userName, job.userID, err)
 			return
 		}
 		if !live {
@@ -149,7 +147,15 @@ func (s *StreamersRepo) process(job statusJob) {
 			return
 		}
 		if !live {
-			log.Infof("channel update for offline channel %s (category %q); leaving status unchanged", job.userName, job.game)
+			// An offline streamer editing their title or category is about
+			// to go live: show them 🟡 if it's an infosec category.
+			if contains(VALID_GAMES, job.game) {
+				log.Infof("channel update for offline channel %s (category %q): marking pre-live", job.userName, job.game)
+				s.applyPrelive(job.userName, job.game, job.language, timeNow())
+			} else {
+				log.Infof("channel update for offline channel %s (category %q): clearing any pre-live marker", job.userName, job.game)
+				s.clearPrelive(job.userName)
+			}
 			return
 		}
 		// The event's category and language are newer than Helix's.
@@ -157,6 +163,9 @@ func (s *StreamersRepo) process(job statusJob) {
 
 	case jobReconcile:
 		s.reconcile()
+
+	case jobSyncSubscriptions:
+		s.syncSubscriptions()
 	}
 }
 
@@ -182,15 +191,6 @@ func (s *StreamersRepo) waitForLiveStream(userID string) (helix.Stream, bool, er
 		sleep(onlineRetryDelays[attempt])
 	}
 	return helix.Stream{}, false, lastErr
-}
-
-func (s *StreamersRepo) notify(subject, msg string) {
-	if s.notificationClient == nil {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	s.notificationClient.Send(ctx, subject, msg)
 }
 
 // messageIDCache remembers the most recent EventSub message IDs so that

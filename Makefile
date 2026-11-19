@@ -26,8 +26,6 @@ run: build
 	-e SS_USERNAME=username \
 	-e TW_CLIENT_ID=client_id \
 	-e TW_CLIENT_SECRET=client_secret \
-	-e SS_PUSHBULLET_APIKEY=myAPIkey \
-	-e SS_PUSHBULLET_DEVICES=myDevice,anotherDevice \
 	$(IMAGE_NAME):$(IMAGE_TAG)
 
 .PHONY: push

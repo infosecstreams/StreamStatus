@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -20,6 +22,17 @@ const defaultReconcileInterval = 5 * time.Minute
 // (still listing a stream that just ended, or not yet listing one that
 // just started), so correcting sooner would undo a fresh event and flap.
 const reconcileGrace = 5 * time.Minute
+
+// preliveTTL is how long a 🟡 pre-live marker lasts if the streamer
+// doesn't go live.
+const preliveTTL = 60 * time.Minute
+
+// Pre-live rows carry their start time in the Twitch link's hover text:
+// "Getting ready: <category> (since 2026-11-19T14:05Z)".
+const (
+	preliveTitlePrefix = "Getting ready: "
+	preliveTimeFormat  = "2006-01-02T15:04Z"
+)
 
 // helixLoginBatch is the max number of user_login values per /streams call.
 const helixLoginBatch = 100
@@ -80,11 +93,27 @@ func (s *StreamersRepo) reconcile() {
 	}
 
 	changes := skipRecentlyEvented(diffLiveState(active, inactive, onlineStreamers(s.indexMdText), live), s.lastEvent, timeNow(), reconcileGrace)
+	expired := expiredPrelive(preliveStreamers(s.indexMdText), live, timeNow(), preliveTTL)
+	for _, name := range expired {
+		log.Infof("reconcile: pre-live marker for %s expired", name)
+		s.clearPrelive(name)
+	}
 	log.Infof("reconcile: %d active, %d inactive checked, %d live, %d corrections", len(active), len(inactive), len(live), len(changes))
+	if len(changes) == 0 {
+		return
+	}
+	var summary strings.Builder
 	for _, c := range changes {
 		log.Warnf("reconcile: correcting %s to online=%v", c.name, c.online)
+		state := "offline"
+		if c.online {
+			state = "online"
+		}
+		fmt.Fprintf(&summary, "• %s → %s\n", c.name, state)
 		s.applyStatus(c.name, c.online, c.stream.GameName, c.stream.Language, c.stream.Tags)
 	}
+	// Each correction is an EventSub event the bot never got (or got wrong).
+	s.alert(fmt.Sprintf("Reconcile corrected %d streamer(s)", len(changes)), summary.String())
 }
 
 // diffLiveState returns the corrections needed so the site matches Helix.
@@ -193,4 +222,50 @@ func skipRecentlyEvented(changes []statusChange, lastEvent map[string]time.Time,
 		kept = append(kept, c)
 	}
 	return kept
+}
+
+// preliveRow is a 🟡 row in index.md.
+type preliveRow struct {
+	name  string    // as written in the row
+	since time.Time // zero if it can't be read
+}
+
+// preliveStreamers returns the 🟡 rows in index.md keyed by lowercased name.
+func preliveStreamers(indexMd string) map[string]preliveRow {
+	out := map[string]preliveRow{}
+	for _, line := range strings.Split(indexMd, "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(line), "🟡") {
+			continue
+		}
+		parts := strings.SplitN(line, "`", 3)
+		if len(parts) != 3 || parts[1] == "" {
+			continue
+		}
+		row := preliveRow{name: parts[1]}
+		if i := strings.LastIndex(line, "(since "); i >= 0 {
+			rest := line[i+len("(since "):]
+			if j := strings.Index(rest, ")"); j >= 0 {
+				row.since, _ = time.Parse(preliveTimeFormat, rest[:j])
+			}
+		}
+		out[strings.ToLower(parts[1])] = row
+	}
+	return out
+}
+
+// expiredPrelive returns the names of pre-live streamers whose marker is
+// older than ttl (or unreadable), unless they're live in an infosec
+// category, in which case the normal diff turns them 🟢.
+func expiredPrelive(prelive map[string]preliveRow, live map[string]helix.Stream, now time.Time, ttl time.Duration) []string {
+	var out []string
+	for key, row := range prelive {
+		if st, ok := live[key]; ok && contains(VALID_GAMES, st.GameName) {
+			continue
+		}
+		if row.since.IsZero() || now.Sub(row.since) >= ttl {
+			out = append(out, row.name)
+		}
+	}
+	sort.Strings(out)
+	return out
 }

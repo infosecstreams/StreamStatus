@@ -46,9 +46,6 @@ github.com/cloudflare/circl/math/mlsbset
 github.com/cloudflare/circl/sign
 github.com/cloudflare/circl/sign/ed25519
 github.com/cloudflare/circl/sign/ed448
-# github.com/cschomburg/go-pushbullet v0.0.0-20171206132031-67759df45fbb
-## explicit
-github.com/cschomburg/go-pushbullet
 # github.com/cyphar/filepath-securejoin v0.7.0
 ## explicit; go 1.18
 github.com/cyphar/filepath-securejoin
@@ -142,10 +139,6 @@ github.com/klauspost/cpuid/v2
 # github.com/nicklaw5/helix/v2 v2.34.0
 ## explicit; go 1.25
 github.com/nicklaw5/helix/v2
-# github.com/nikoksr/notify v1.5.0
-## explicit; go 1.24.0
-github.com/nikoksr/notify
-github.com/nikoksr/notify/service/pushbullet
 # github.com/pjbgf/sha1cd v0.6.0
 ## explicit; go 1.22
 github.com/pjbgf/sha1cd
@@ -186,9 +179,6 @@ golang.org/x/crypto/ssh/knownhosts
 golang.org/x/net/context
 golang.org/x/net/internal/socks
 golang.org/x/net/proxy
-# golang.org/x/sync v0.22.0
-## explicit; go 1.25.0
-golang.org/x/sync/errgroup
 # golang.org/x/sys v0.47.0
 ## explicit; go 1.25.0
 golang.org/x/sys/cpu

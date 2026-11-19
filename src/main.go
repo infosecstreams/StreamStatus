@@ -1,18 +1,15 @@
 package main
 
 import (
-	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"runtime/debug"
-	"strings"
 	"sync"
 	"time"
 
 	httpauth "github.com/go-git/go-git/v5/plumbing/transport/http"
-	"github.com/nikoksr/notify"
-	"github.com/nikoksr/notify/service/pushbullet"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -21,6 +18,15 @@ var version = "unknown"
 
 // main do the work.
 func main() {
+	// Alerts first, so even startup failures reach Discord.
+	var alerts alertSender
+	if hook := os.Getenv("SS_DISCORD_WEBHOOK"); hook != "" {
+		alerts = newDiscordWebhook(hook)
+		log.AddHook(newAlertHook(alerts, 30*time.Minute))
+	} else {
+		log.Warn("no SS_DISCORD_WEBHOOK specified in environment, notifications disabled (errors are only logged)")
+	}
+
 	buildInfo, _ := debug.ReadBuildInfo()
 	log.Printf("started streamstatus %s", version)
 	fmt.Printf("%s\n", buildInfo.String())
@@ -54,36 +60,24 @@ func main() {
 		log.Fatalf("error: could not get a Twitch app access token: %s", err)
 	}
 
-	// Setup notifications
-	if len(os.Getenv("SS_PUSHBULLET_APIKEY")) == 0 || len(os.Getenv("SS_PUSHBULLET_DEVICES")) == 0 {
-		log.Fatalln("error: no SS_PUSHBULLET_APIKEY and/or SS_PUSHBULLET_DEVICES specified in environment! https://www.pushbullet.com/#settings/account")
-	}
-	notifier := notify.New()
-	pushbullet := pushbullet.New(os.Getenv("SS_PUSHBULLET_APIKEY"))
-	for _, device := range strings.Split(os.Getenv("SS_PUSHBULLET_DEVICES"), ",") {
-		pushbullet.AddReceivers(device)
-	}
-	notifier.UseServices(pushbullet)
-
-	go keepAppTokenFresh(client, tokenTTL, func(err error) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		notifier.Send(ctx, "Twitch app token renewal failed", err.Error())
-	})
+	go keepAppTokenFresh(client, tokenTTL)
 
 	// Create StreamersRepo object
 	var repo = StreamersRepo{
-		auth:               auth,
-		activeCsvPath:      activeCsvPath,
-		inactiveCsvPath:    inactiveCsvPath,
-		inactiveFilePath:   iFilePath,
-		indexFilePath:      filePath,
-		repoPath:           repoPath,
-		url:                repoUrl,
-		client:             client,
-		notificationClient: notifier,
-		mutex:              &sync.Mutex{},
-		reconcileInactive:  os.Getenv("SS_RECONCILE_INACTIVE") == "true",
+		auth:              auth,
+		activeCsvPath:     activeCsvPath,
+		inactiveCsvPath:   inactiveCsvPath,
+		inactiveFilePath:  iFilePath,
+		indexFilePath:     filePath,
+		repoPath:          repoPath,
+		url:               repoUrl,
+		client:            client,
+		alerts:            alerts,
+		subs:              client,
+		callbackURL:       os.Getenv("SS_CALLBACK_URL"),
+		secret:            os.Getenv("SS_SECRETKEY"),
+		mutex:             &sync.Mutex{},
+		reconcileInactive: os.Getenv("SS_RECONCILE_INACTIVE") == "true",
 	}
 
 	reconcileInterval := defaultReconcileInterval
@@ -94,6 +88,7 @@ func main() {
 		}
 		reconcileInterval = d
 	}
+	repo.alert("StreamStatus started", fmt.Sprintf("version %s, reconciling every %s", version, reconcileInterval))
 	repo.startWorker()
 	repo.startReconciler(reconcileInterval)
 	log.Printf("reconciling live status every %s (inactive streamers: %v)", reconcileInterval, repo.reconcileInactive)
@@ -107,8 +102,19 @@ func main() {
 		port = ":" + os.Getenv("SS_PORT")
 	}
 
-	// Listen and serve.
-	log.Printf("server starting on %s", port)
+	// Listen before creating subscriptions: Twitch verifies each new one
+	// by calling the callback straight away.
 	http.HandleFunc("/webhook/callbacks", repo.eventsubStatus)
-	log.Fatal(http.ListenAndServe(port, nil))
+	ln, err := net.Listen("tcp", port)
+	if err != nil {
+		log.Fatalf("error: listening on %s: %s", port, err)
+	}
+	log.Printf("server starting on %s", port)
+	if repo.callbackURL != "" {
+		log.Printf("managing EventSub subscriptions for %s", repo.callbackURL)
+		repo.startSubscriptionSync()
+	} else {
+		log.Warn("no SS_CALLBACK_URL specified in environment, not managing EventSub subscriptions")
+	}
+	log.Fatal(http.Serve(ln, nil))
 }

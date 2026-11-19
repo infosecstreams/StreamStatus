@@ -4,7 +4,7 @@ This program updates streamer's status on the [hacklist](https://infosecstreams.
 
 ![Example Debug Output](./example.png)
 
-You need to subscribe to `stream.{offline,online}` events from the Twitch EventSub API. This program listens on `http://0.0.0.0:SS_PORT/webhook/callbacks` for webhook requests from twitch containing JSON EventSub data:
+You need `stream.online`, `stream.offline` and `channel.update` subscriptions from the Twitch EventSub API (set `SS_CALLBACK_URL` and the bot creates any that are missing). `channel.update` drives the 🟡 "getting ready" marker shown when an offline streamer switches to an infosec category. This program listens on `http://0.0.0.0:SS_PORT/webhook/callbacks` for webhook requests from twitch containing JSON EventSub data:
 
 ```json
 {
@@ -86,7 +86,7 @@ INFO[0000] server starting on :8080
 Run directly with ENV vars:
 
 ```shell
-SS_PORT=3000 SS_SECRETKEY=secret SS_TOKEN=token SS_USERNAME=username TW_CLIENT_ID=client_id TW_CLIENT_SECRET=client_secret SS_PUSHBULLET_APIKEY=abc123 SS_PUSHBULLET_DEVICES=phone ./StreamStatus
+SS_PORT=3000 SS_SECRETKEY=secret SS_TOKEN=token SS_USERNAME=username TW_CLIENT_ID=client_id TW_CLIENT_SECRET=client_secret ./StreamStatus
 ```
 
 ---
@@ -106,10 +106,11 @@ export SS_USERNAME=username
 export TW_CLIENT_ID=client_id
 # Twitch Secret
 export TW_CLIENT_SECRET=client_secret
-# Pushbullet API Key
-export SS_PUSHBULLET_APIKEY=myAPIkey
-# Pushbullet devices (comma separated) to send notifications to
-export SS_PUSHBULLET_DEVICES=myDevice,anotherDevice
+# Optional: Discord channel webhook for errors and status alerts (keep it secret)
+export SS_DISCORD_WEBHOOK=https://discord.com/api/webhooks/<id>/<token>
+# Optional: public URL of /webhook/callbacks; when set the bot creates any missing
+# stream.online, stream.offline and channel.update EventSub subscriptions
+export SS_CALLBACK_URL=https://example.com/webhook/callbacks
 # Optional: how often to re-check every streamer's live state against Helix (default 5m)
 export SS_RECONCILE_INTERVAL=5m
 # Optional: let reconciliation reactivate live streamers from inactive_streamers.csv (default false)
@@ -124,7 +125,7 @@ export SS_RECONCILE_INACTIVE=false
 Or, if you built the docker image:
 
 ```shell
-docker run --rm -it -e SS_PORT=9001 -e SS_SECRETKEY=secret -e SS_TOKEN=token -e SS_USERNAME=username -e TW_CLIENT_ID=client_id -e TW_CLIENT_SECRET=client_secret -e SS_PUSHBULLET_APIKEY=abc123 -e SS_PUSHBULLET_DEVICES=phone streamstatus:dev
+docker run --rm -it -e SS_PORT=9001 -e SS_SECRETKEY=secret -e SS_TOKEN=token -e SS_USERNAME=username -e TW_CLIENT_ID=client_id -e TW_CLIENT_SECRET=client_secret streamstatus:dev
 ```
 
 ---

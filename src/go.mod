@@ -5,7 +5,6 @@ go 1.27.0
 require (
 	github.com/go-git/go-git/v5 v5.19.2
 	github.com/nicklaw5/helix/v2 v2.34.0
-	github.com/nikoksr/notify v1.5.0
 	github.com/sirupsen/logrus v1.10.1
 )
 
@@ -14,7 +13,6 @@ require (
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/ProtonMail/go-crypto v1.4.1 // indirect
 	github.com/cloudflare/circl v1.6.5 // indirect
-	github.com/cschomburg/go-pushbullet v0.0.0-20171206132031-67759df45fbb // indirect
 	github.com/cyphar/filepath-securejoin v0.7.0 // indirect
 	github.com/emirpasic/gods v1.18.1 // indirect
 	github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376 // indirect
@@ -30,7 +28,6 @@ require (
 	github.com/xanzy/ssh-agent v0.3.3 // indirect
 	golang.org/x/crypto v0.55.0 // indirect
 	golang.org/x/net v0.58.0 // indirect
-	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 )

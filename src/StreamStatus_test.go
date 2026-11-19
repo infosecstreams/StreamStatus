@@ -17,7 +17,6 @@ import (
 
 	git "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/object"
-	"github.com/nikoksr/notify"
 )
 
 // gitOutput runs a git command in dir and returns its output, failing the test on error.
@@ -233,16 +232,15 @@ func TestPushRepoRetriesAfterUpstreamAdvance(t *testing.T) {
 	t.Cleanup(func() { os.Chdir(oldWd) })
 
 	s := &StreamersRepo{
-		url:                url,
-		repoPath:           dir,
-		indexFilePath:      dir + "/index.md",
-		inactiveFilePath:   dir + "/inactive.md",
-		streamer:           "teststreamer",
-		online:             true,
-		language:           "EN",
-		game:               "Just Chatting",
-		mutex:              &sync.Mutex{},
-		notificationClient: notify.New(),
+		url:              url,
+		repoPath:         dir,
+		indexFilePath:    dir + "/index.md",
+		inactiveFilePath: dir + "/inactive.md",
+		streamer:         "teststreamer",
+		online:           true,
+		language:         "EN",
+		game:             "Just Chatting",
+		mutex:            &sync.Mutex{},
 	}
 
 	// Normal event flow: sync, update markdown, commit.
@@ -337,12 +335,11 @@ func TestEventsubStatusSerializesConcurrentEvents(t *testing.T) {
 	t.Cleanup(func() { os.Chdir(oldWd) })
 
 	s := &StreamersRepo{
-		url:                url,
-		repoPath:           dir,
-		indexFilePath:      dir + "/index.md",
-		inactiveFilePath:   dir + "/inactive.md",
-		mutex:              &sync.Mutex{},
-		notificationClient: notify.New(),
+		url:              url,
+		repoPath:         dir,
+		indexFilePath:    dir + "/index.md",
+		inactiveFilePath: dir + "/inactive.md",
+		mutex:            &sync.Mutex{},
 	}
 	s.startWorker()
 

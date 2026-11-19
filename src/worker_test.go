@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/nicklaw5/helix/v2"
-	"github.com/nikoksr/notify"
 )
 
 // fakeStreams is a scripted stand-in for the Helix /streams endpoint.
@@ -102,14 +101,13 @@ func newGitFixture(t *testing.T, indexLines, inactiveLines []string, activeCsv, 
 	url := "u0/u1/u2/u3/origin"
 	dir := "origin"
 	return &StreamersRepo{
-		url:                url,
-		repoPath:           dir,
-		indexFilePath:      dir + "/index.md",
-		inactiveFilePath:   dir + "/inactive.md",
-		activeCsvPath:      dir + "/streamers.csv",
-		inactiveCsvPath:    dir + "/inactive_streamers.csv",
-		mutex:              &sync.Mutex{},
-		notificationClient: notify.New(),
+		url:              url,
+		repoPath:         dir,
+		indexFilePath:    dir + "/index.md",
+		inactiveFilePath: dir + "/inactive.md",
+		activeCsvPath:    dir + "/streamers.csv",
+		inactiveCsvPath:  dir + "/inactive_streamers.csv",
+		mutex:            &sync.Mutex{},
 	}, origin
 }
 
@@ -347,7 +345,8 @@ func TestChannelUpdateWhileOfflineChangesNothing(t *testing.T) {
 	}}
 	before := gitOutput(t, origin, "rev-parse", "main")
 
-	s.process(statusJob{kind: jobChannelUpdate, userID: "1", userName: "alpha", game: "Just Chatting", language: "en"})
+	// (An infosec category would mark them 🟡 pre-live instead; see prelive_test.go.)
+	s.process(statusJob{kind: jobChannelUpdate, userID: "1", userName: "alpha", game: "Minecraft", language: "en"})
 
 	if gitOutput(t, origin, "rev-parse", "main") != before {
 		t.Errorf("offline channel.update changed the site:\n%s", gitOutput(t, origin, "show", "main:index.md"))

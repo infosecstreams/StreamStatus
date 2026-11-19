@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -18,7 +17,6 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 	httpauth "github.com/go-git/go-git/v5/plumbing/transport/http"
 	"github.com/nicklaw5/helix/v2"
-	"github.com/nikoksr/notify"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -44,25 +42,37 @@ var OPTIONAL_TAGS = []string{
 
 // StreamersRepo struct represents fields to hold various data while updating status.
 type StreamersRepo struct {
-	auth               *httpauth.BasicAuth
-	activeCsvPath      string
-	inactiveCsvPath    string
-	inactiveFilePath   string
-	inactiveMdText     string
-	indexFilePath      string
-	indexMdText        string
-	online             bool
-	reactivated        bool
-	repo               *git.Repository
-	repoPath           string
-	streamer           string
-	url                string
-	language           string
-	game               string
-	tags               []string
-	notificationClient *notify.Notify
-	client             streamsClient
-	mutex              *sync.Mutex
+	auth             *httpauth.BasicAuth
+	activeCsvPath    string
+	inactiveCsvPath  string
+	inactiveFilePath string
+	inactiveMdText   string
+	indexFilePath    string
+	indexMdText      string
+	online           bool
+	reactivated      bool
+	repo             *git.Repository
+	repoPath         string
+	streamer         string
+	url              string
+	language         string
+	game             string
+	tags             []string
+	// prelive marks the streamer 🟡 (offline, but just set an infosec
+	// category or title) instead of 🟢/offline; preliveSince is when.
+	prelive      bool
+	preliveSince time.Time
+	// onlyIfPrelive restricts an offline update to rows currently 🟡.
+	onlyIfPrelive bool
+	// alerts receives operational messages (SS_DISCORD_WEBHOOK); may be nil.
+	alerts alertSender
+	// subs, callbackURL and secret manage EventSub subscriptions
+	// (SS_CALLBACK_URL); subscription management is off when unset.
+	subs        subscriptionsClient
+	callbackURL string
+	secret      string
+	client      streamsClient
+	mutex       *sync.Mutex
 
 	jobs         chan statusJob
 	pending      sync.WaitGroup
@@ -112,7 +122,9 @@ func (s *StreamersRepo) gitCommit() error {
 		return err
 	}
 	commitMessage := ""
-	if s.online {
+	if s.prelive {
+		commitMessage = fmt.Sprintf("🟡 %s is getting ready to stream", s.streamer)
+	} else if s.online {
 		commitMessage = fmt.Sprintf("🟢 %s has gone online!", s.streamer)
 	} else {
 		commitMessage = fmt.Sprintf("☠️  %s has gone offline!", s.streamer)
@@ -288,6 +300,13 @@ func (s *StreamersRepo) updateStreamStatus() error {
 	for i, v := range indexMdLines {
 		if strings.Contains(strings.ToLower(v), streamerFormatted) {
 			streamerFound = true
+			status := strings.TrimSpace(strings.Split(v, "|")[0])
+			// Pre-live never overrides a live row (Helix may simply not
+			// list a stream that just started), and a pre-live clear only
+			// touches 🟡 rows.
+			if (s.prelive && status == "🟢") || (s.onlyIfPrelive && status != "🟡") {
+				return &NoChangeNeededError{err: fmt.Sprintf("no change needed for: %s (row is %q)", s.streamer, status)}
+			}
 			otherInfo := strings.Split(v, "|")[2]
 			newLine := s.generateStreamerLine(otherInfo)
 			if newLine != v {
@@ -301,6 +320,10 @@ func (s *StreamersRepo) updateStreamStatus() error {
 		}
 	}
 
+	if !streamerFound && (s.prelive || s.onlyIfPrelive) {
+		// Only live streamers get reactivated from inactive.md.
+		return &NoChangeNeededError{err: fmt.Sprintf("no change needed for: %s (not an active streamer)", s.streamer)}
+	}
 	if !streamerFound {
 		log.Warnf("streamer not found in index.md, checking inactive.md for %s", s.streamer)
 		for i, v := range inactiveMdLines {
@@ -327,8 +350,25 @@ func (s *StreamersRepo) updateStreamStatus() error {
 
 func (s *StreamersRepo) generateStreamerLine(otherInfo string) string {
 	tw := fmt.Sprintf("[<i class=\"fab fa-twitch\" style=\"color:#9146FF\"></i>](https://www.twitch.tv/%s", s.streamer)
-	yt := strings.Split(otherInfo, "&nbsp;")[1]
+	// The links column is "<twitch link> &nbsp;<youtube link or nothing>";
+	// tolerate a hand-edited row without the separator instead of panicking.
+	yt := " "
+	if parts := strings.SplitN(otherInfo, "&nbsp;", 2); len(parts) == 2 {
+		yt = parts[1]
+	}
 	tags := strings.Join(s.tags, ", ")
+	if s.prelive {
+		return fmt.Sprintf("%s | `%s` | %s \"%s%s (since %s)\") &nbsp;%s| %s",
+			"🟡",
+			s.streamer,
+			tw,
+			preliveTitlePrefix,
+			s.game,
+			s.preliveSince.UTC().Format(preliveTimeFormat),
+			yt,
+			s.language,
+		)
+	}
 	if s.online && s.game != "" {
 		return fmt.Sprintf("%s | `%s` | %s \"%s, Tags: %s\") &nbsp;%s| %s",
 			"🟢",
@@ -387,9 +427,6 @@ func updateMarkdown(repo *StreamersRepo) error {
 	err = repo.readFile()
 	if err != nil {
 		log.Errorf("error reading file: %+s", err)
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		repo.notificationClient.Send(ctx, "error reading file", err.Error())
 		return err
 	}
 
@@ -490,16 +527,9 @@ func pushRepo(repo *StreamersRepo) {
 	}
 }
 
-// notifyPushError reports a push failure via the notification client and log.
+// notifyPushError reports a push failure; Error level also alerts Discord.
 func notifyPushError(repo *StreamersRepo, err error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	repo.notificationClient.Send(
-		ctx,
-		"error pushing repo to GitHub",
-		fmt.Sprintf("%s", err),
-	)
-	log.Printf("error pushing repo to GitHub: %s", err)
+	log.Errorf("error pushing repo to GitHub for %s: %s", repo.streamer, err)
 }
 
 // eventSubNotification is a struct to hold the eventSub webhook request from Twitch.
@@ -556,6 +586,15 @@ func (s *StreamersRepo) eventsubStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Twitch revoked the subscription (user banned/deleted, or too many
+	// failed deliveries): no more events will arrive for it.
+	if r.Header.Get("Twitch-Eventsub-Message-Type") == "revocation" {
+		log.Errorf("EventSub subscription revoked: type=%s broadcaster=%s status=%s id=%s",
+			vals.Subscription.Type, vals.Subscription.Condition.BroadcasterUserID, vals.Subscription.Status, vals.Subscription.ID)
+		w.Write([]byte("OK"))
+		return
+	}
+
 	job, ok := jobFromNotification(vals)
 	if !ok {
 		log.Errorf("error: event type %s has not been implemented -- pull requests welcome!", vals.Subscription.Type)
@@ -602,6 +641,7 @@ func jobFromNotification(vals eventSubNotification) (statusJob, bool) {
 // applyStatus writes one streamer's status through the normal
 // update/commit/push path. Callers must hold s.mutex (the worker does).
 func (s *StreamersRepo) applyStatus(streamer string, online bool, game, language string, tags []string) {
+	s.prelive, s.onlyIfPrelive = false, false
 	s.streamer = streamer
 	s.online = online
 	s.game = game
@@ -647,4 +687,37 @@ func helixError(rc helix.ResponseCommon) error {
 		return nil
 	}
 	return fmt.Errorf("helix status=%d %s: %s", rc.StatusCode, rc.Error, rc.ErrorMessage)
+}
+
+// applyPrelive marks an active, offline streamer 🟡 "getting ready".
+// Callers must hold s.mutex.
+func (s *StreamersRepo) applyPrelive(streamer, game, language string, since time.Time) {
+	s.streamer = streamer
+	s.online = false
+	s.prelive, s.onlyIfPrelive = true, false
+	s.preliveSince = since
+	s.game = game
+	s.language = strings.ToUpper(language)
+	s.tags = nil
+	defer func() { s.prelive = false }()
+	if err := updateMarkdown(s); err != nil {
+		log.Infof("pre-live: no change for %s: %s", streamer, err)
+		return
+	}
+	updateRepo(s)
+	pushRepo(s)
+}
+
+// clearPrelive turns a 🟡 row back to offline; other rows are untouched.
+// Callers must hold s.mutex.
+func (s *StreamersRepo) clearPrelive(streamer string) {
+	s.streamer = streamer
+	s.online, s.prelive, s.onlyIfPrelive = false, false, true
+	s.game, s.language, s.tags = "", "", nil
+	defer func() { s.onlyIfPrelive = false }()
+	if err := updateMarkdown(s); err != nil {
+		return
+	}
+	updateRepo(s)
+	pushRepo(s)
 }
