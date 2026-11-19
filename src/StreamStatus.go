@@ -88,6 +88,8 @@ type StreamersRepo struct {
 	// lastEvent is when each streamer (lowercased) last had an EventSub
 	// event handled; reconciliation leaves them alone for a while after.
 	lastEvent map[string]time.Time
+	// schedule holds Twitch stream schedules (schedule.go); nil disables them.
+	schedule *scheduleState
 }
 
 // streamsClient is the slice of the Helix API the bot uses; *helix.Client

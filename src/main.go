@@ -91,6 +91,15 @@ func main() {
 	go keepAppTokenFresh(client, tokenTTL, repo.runInWorker)
 	repo.startReconciler(reconcileInterval)
 	log.Printf("reconciling live status every %s (inactive streamers: %v)", reconcileInterval, repo.reconcileInactive)
+	// --- bot-schedule: schedule polling and /api/schedule.{json,ics}. At
+	// merge, mount scheduleHandlers() on the shared /api/ mux instead of
+	// http.DefaultServeMux. ---
+	repo.schedule = newScheduleState(client)
+	repo.startScheduleRefresher(scheduleRefreshInterval)
+	for path, h := range repo.scheduleHandlers() {
+		http.HandleFunc(path, h)
+	}
+	// --- end bot-schedule ---
 	port := ":8080"
 	// Google Cloud Run defaults to 8080. Their platform
 	// sets the $PORT ENV var if you override it with, e.g.:
