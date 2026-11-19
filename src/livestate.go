@@ -506,6 +506,25 @@ func (s *StreamersRepo) livePrelive(job statusJob) {
 	s.live.rebuild(now)
 }
 
+// livePreliveLogin marks a streamer, by login, pre-live in live state
+// unless they already are. applyPrelive calls it, so every pre-live
+// source (channel.update, scheduled streams) reaches status.json even
+// when status commits are off.
+func (s *StreamersRepo) livePreliveLogin(login, category, language string, since time.Time) {
+	if s.live == nil {
+		return
+	}
+	id, ok := s.live.byLogin[strings.ToLower(login)]
+	if !ok {
+		return
+	}
+	if st := s.live.states[id]; st != nil && (st.live || st.status == statusPrelive) {
+		return
+	}
+	s.live.preliveUpdate(id, category, "", language, since)
+	s.live.rebuild(timeNow())
+}
+
 // reconcileLive feeds a reconciliation's Helix answer into live state.
 func (s *StreamersRepo) reconcileLive(live map[string]helix.Stream) {
 	if s.live == nil {

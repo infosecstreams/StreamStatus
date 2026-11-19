@@ -203,7 +203,7 @@ func TestStatusBeforeFirstSnapshot(t *testing.T) {
 	}
 }
 
-func TestAcceptsGzip(t *testing.T) {
+func TestGzipAccepted(t *testing.T) {
 	for h, want := range map[string]bool{
 		"":                    false,
 		"gzip":                true,
@@ -216,8 +216,8 @@ func TestAcceptsGzip(t *testing.T) {
 		"x-gzip":              true,
 		"identity":            false,
 	} {
-		if got := acceptsGzip(h); got != want {
-			t.Errorf("acceptsGzip(%q) = %v, want %v", h, got, want)
+		if got := gzipAccepted(h); got != want {
+			t.Errorf("gzipAccepted(%q) = %v, want %v", h, got, want)
 		}
 	}
 }

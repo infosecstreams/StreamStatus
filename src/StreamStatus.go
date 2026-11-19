@@ -836,6 +836,7 @@ func helixError(rc helix.ResponseCommon) error {
 // applyPrelive marks an active, offline streamer 🟡 "getting ready".
 // Callers must hold s.mutex.
 func (s *StreamersRepo) applyPrelive(streamer, game, language string, since time.Time) bool {
+	s.livePreliveLogin(streamer, game, language, since)
 	s.streamer = streamer
 	s.online = false
 	s.prelive, s.onlyIfPrelive = true, false

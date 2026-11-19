@@ -366,3 +366,28 @@ func TestStatusCommitsOff(t *testing.T) {
 		t.Errorf("reactivation should still be committed; streamers.csv:\n%s", csv)
 	}
 }
+
+// Pre-live set through applyPrelive by login (e.g. a scheduled stream)
+// reaches status.json even with status commits off, without overwriting
+// a channel.update marker.
+func TestApplyPreliveFeedsLiveState(t *testing.T) {
+	c := useClock(t, t0)
+	users := &fakeUsers{}
+	users.set(userAlpha, userBeta)
+	s := &StreamersRepo{mutex: &sync.Mutex{}, live: newTestLive(t, ""), users: users, statusCommitsOff: true}
+	s.resolveRoster([]string{"alpha", "beta"}, c.now)
+
+	s.applyPrelive("Alpha", "Science & Technology", "en", c.now)
+	_, got := decodeStatus(t, s.live)
+	if got["alpha"].Status != statusPrelive || got["alpha"].PreliveSince != rfc3339(t0) {
+		t.Fatalf("alpha = %+v", got["alpha"])
+	}
+
+	s.live.preliveUpdate("2", "Just Chatting", "Soon", "en", c.now)
+	c.advance(time.Minute)
+	s.applyPrelive("beta", "Just Chatting", "en", c.now)
+	s.live.rebuild(c.now)
+	if _, got = decodeStatus(t, s.live); got["beta"].Title != "Soon" || got["beta"].PreliveSince != rfc3339(t0) {
+		t.Errorf("existing marker overwritten: %+v", got["beta"])
+	}
+}

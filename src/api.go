@@ -101,12 +101,12 @@ func serveDoc(w http.ResponseWriter, r *http.Request, doc *apiDoc) {
 		return
 	}
 
-	gzipped := acceptsGzip(r.Header.Get("Accept-Encoding"))
+	gzipped := gzipAccepted(r.Header.Get("Accept-Encoding"))
 	tag := doc.etag(gzipped)
 	h.Set("Vary", "Accept-Encoding")
 	h.Set("Cache-Control", "public, max-age="+strconv.Itoa(doc.maxAge))
 	h.Set("ETag", tag)
-	if etagMatches(r.Header.Get("If-None-Match"), doc) {
+	if ifNoneMatchHits(r.Header.Get("If-None-Match"), doc) {
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
@@ -123,11 +123,11 @@ func serveDoc(w http.ResponseWriter, r *http.Request, doc *apiDoc) {
 	}
 }
 
-// etagMatches reports whether an If-None-Match header names either
+// ifNoneMatchHits reports whether an If-None-Match header names either
 // representation of doc (or is "*"). Comparison is weak, as RFC 9110
 // requires for If-None-Match, so a proxy that weakened our tag still gets
 // a 304.
-func etagMatches(header string, doc *apiDoc) bool {
+func ifNoneMatchHits(header string, doc *apiDoc) bool {
 	for _, t := range strings.Split(header, ",") {
 		t = strings.TrimPrefix(strings.TrimSpace(t), "W/")
 		if t == "*" || t == doc.etag(false) || t == doc.etag(true) {
@@ -137,8 +137,8 @@ func etagMatches(header string, doc *apiDoc) bool {
 	return false
 }
 
-// acceptsGzip reports whether an Accept-Encoding header allows gzip.
-func acceptsGzip(header string) bool {
+// gzipAccepted reports whether an Accept-Encoding header allows gzip.
+func gzipAccepted(header string) bool {
 	for _, part := range strings.Split(header, ",") {
 		fields := strings.Split(part, ";")
 		coding := strings.ToLower(strings.TrimSpace(fields[0]))
