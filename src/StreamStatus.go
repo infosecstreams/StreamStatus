@@ -94,8 +94,9 @@ type StreamersRepo struct {
 	live *liveState
 	// users maps roster logins to Twitch user IDs for live state.
 	users usersClient
-	// follows fetches daily follower totals for stats.
+	// follows fetches follower totals and media VODs and clips for stats.
 	follows followersClient
+	media   mediaClient
 	// statusCommitsOff (SS_COMMIT_STATUS=false) stops committing status
 	// changes to the site repo. Roster moves (reactivating an inactive
 	// streamer who went live) are still committed.
@@ -755,6 +756,10 @@ func jobFromNotification(vals eventSubNotification) (statusJob, bool) {
 			userLogin:   e.BroadcasterUserLogin,
 			displayName: e.BroadcasterUserName,
 		}, true
+	case helix.EventSubTypeChannelRaid:
+		var e helix.EventSubChannelRaidEvent
+		_ = json.Unmarshal(vals.Event, &e)
+		return statusJob{kind: jobRaid, userID: e.ToBroadcasterUserID, userName: e.ToBroadcasterUserLogin, raid: &e}, true
 	}
 	return statusJob{}, false
 }

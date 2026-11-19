@@ -25,6 +25,10 @@ const (
 	// of daily follower totals.
 	jobStats     jobKind = "stats"
 	jobFollowers jobKind = "followers"
+	// jobRaid records a channel.raid event; jobMedia fetches a batch of
+	// VODs and clips.
+	jobRaid  jobKind = "channel.raid"
+	jobMedia jobKind = "media"
 	// jobFunc runs fn on the worker, e.g. token renewal, which must not
 	// race the Helix calls the worker makes.
 	jobFunc jobKind = "func"
@@ -43,6 +47,8 @@ type statusJob struct {
 	title       string
 	userLogin   string
 	displayName string
+	// raid is the channel.raid event (jobRaid).
+	raid *helix.EventSubChannelRaidEvent
 }
 
 // jobQueueSize bounds how many events can wait behind a slow git push.
@@ -227,6 +233,17 @@ func (s *StreamersRepo) process(job statusJob) {
 
 	case jobFollowers:
 		s.fetchFollowers()
+
+	case jobRaid:
+		if s.live != nil && job.raid != nil {
+			r := job.raid
+			s.live.recordRaid(raidRecord{at: timeNow(), fromID: r.FromBroadcasterUserID, fromLogin: r.FromBroadcasterUserLogin,
+				fromName: r.FromBroadcasterUserName, toID: r.ToBroadcasterUserID, toLogin: r.ToBroadcasterUserLogin,
+				toName: r.ToBroadcasterUserName, viewers: r.Viewers, source: "eventsub"})
+		}
+
+	case jobMedia:
+		s.fetchMedia()
 
 	case jobFunc:
 		job.fn()

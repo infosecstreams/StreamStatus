@@ -83,6 +83,11 @@ type liveState struct {
 	// modification time of the last import.
 	backfillPath  string
 	backfillMtime time.Time
+
+	// lastTags caches each live stream's tags (insights.go); chatWanted
+	// is the live roster channels (login -> ID) for the chat bot.
+	lastTags   map[string]string
+	chatWanted atomic.Pointer[map[string]string]
 }
 
 // newLiveState loads the known users from db.
@@ -173,6 +178,7 @@ func (l *liveState) online(id string, stream helix.Stream, now time.Time) {
 		st.status = statusOnline
 	}
 	l.recordSample(id, now, stream.ViewerCount, stream.GameName)
+	l.recordTags(id, stream.Tags)
 	l.recordTitle(id, now, stream.Title, stream.GameName)
 }
 
@@ -314,6 +320,14 @@ func (l *liveState) rebuild(now time.Time) {
 		log.Errorf("live state: reading sessions: %s", err)
 	}
 	hours := streamedHours(segs, now, hoursWindow)
+
+	wanted := map[string]string{}
+	for id := range l.roster {
+		if st, u := l.states[id], l.users[id]; st != nil && st.live && u != nil {
+			wanted[u.login] = id
+		}
+	}
+	l.chatWanted.Store(&wanted)
 
 	entries := make([]statusEntry, 0, len(l.roster))
 	liveCount := 0
@@ -591,6 +605,7 @@ func (s *StreamersRepo) refreshLive() {
 			}
 		}
 	}
+	s.snapshotSessionFollowers(now)
 	s.live.expirePrelive(now)
 	s.live.rebuild(now)
 }

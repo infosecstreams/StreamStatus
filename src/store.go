@@ -92,6 +92,68 @@ var migrations = []string{
 	// 3: where a session came from: "live" (recorded by the bot) or
 	// "backfill" (imported from a tracker's history, see backfill.go).
 	`ALTER TABLE sessions ADD COLUMN source TEXT NOT NULL DEFAULT 'live';`,
+
+	// 4: followers at stream start and end, raids, stream tags, VODs and
+	// clips, and chat activity per stream.
+	`ALTER TABLE sessions ADD COLUMN followers_start INTEGER;
+	ALTER TABLE sessions ADD COLUMN followers_end INTEGER;
+	CREATE TABLE raids (
+		id         INTEGER PRIMARY KEY,
+		at         INTEGER NOT NULL,
+		from_id    TEXT NOT NULL,
+		from_login TEXT NOT NULL,
+		from_name  TEXT NOT NULL DEFAULT '',
+		to_id      TEXT NOT NULL,
+		to_login   TEXT NOT NULL,
+		to_name    TEXT NOT NULL DEFAULT '',
+		viewers    INTEGER NOT NULL,
+		source     TEXT NOT NULL
+	);
+	CREATE INDEX raids_at ON raids (at);
+	CREATE TABLE session_tags (
+		session_id INTEGER NOT NULL,
+		tag        TEXT NOT NULL,
+		PRIMARY KEY (session_id, tag)
+	);
+	CREATE TABLE videos (
+		user_id       TEXT NOT NULL,
+		id            TEXT NOT NULL,
+		created_at    INTEGER NOT NULL,
+		title         TEXT NOT NULL,
+		url           TEXT NOT NULL,
+		thumbnail_url TEXT NOT NULL,
+		views         INTEGER NOT NULL,
+		duration_s    INTEGER NOT NULL,
+		PRIMARY KEY (user_id, id)
+	);
+	CREATE TABLE clips (
+		user_id       TEXT NOT NULL,
+		id            TEXT NOT NULL,
+		created_at    INTEGER NOT NULL,
+		title         TEXT NOT NULL,
+		url           TEXT NOT NULL,
+		thumbnail_url TEXT NOT NULL,
+		views         INTEGER NOT NULL,
+		duration_s    REAL NOT NULL,
+		creator_name  TEXT NOT NULL,
+		PRIMARY KEY (user_id, id)
+	);
+	CREATE TABLE media_fetched (
+		user_id TEXT NOT NULL,
+		day     TEXT NOT NULL,
+		PRIMARY KEY (user_id, day)
+	);
+	CREATE TABLE chat_stats (
+		session_id     INTEGER PRIMARY KEY,
+		messages       INTEGER NOT NULL DEFAULT 0,
+		chatters       INTEGER NOT NULL DEFAULT 0,
+		first_time     INTEGER NOT NULL DEFAULT 0,
+		subs           INTEGER NOT NULL DEFAULT 0,
+		resubs         INTEGER NOT NULL DEFAULT 0,
+		gift_subs      INTEGER NOT NULL DEFAULT 0,
+		bits           INTEGER NOT NULL DEFAULT 0,
+		joined_seconds INTEGER NOT NULL DEFAULT 0
+	);`,
 }
 
 // openStore opens (creating if needed) the database at path and brings

@@ -180,6 +180,7 @@ func (s *StreamersRepo) registerAPI(mux *http.ServeMux) {
 	mux.HandleFunc("/api/status.json", s.handleStatus)
 	mux.HandleFunc("/api/stats.json", s.handleStats)
 	mux.HandleFunc("/api/stats/", s.handleStreamerStats)
+	mux.HandleFunc("/api/raids.json", s.handleRaids)
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodOptions {
 			serveDoc(w, r, nil)

@@ -62,6 +62,28 @@ type subscriptionPlan struct {
 // removed and recreated; subscriptions for broadcasters not in ids are left
 // alone.
 func planSubscriptions(ids []string, existing []helix.EventSubSubscription, callback, secret string) subscriptionPlan {
+	return planSubscriptionsWith(ids, existing, callback, secret, false)
+}
+
+// raidSubscriptions are channel.raid subscriptions for raids out of
+// (from) and into (to) each streamer; they feed raid stats (stats.go) and
+// are only made when live state is on.
+var raidSubscriptions = []struct {
+	version string
+	cond    func(id string) helix.EventSubCondition
+}{
+	{"1", func(id string) helix.EventSubCondition { return helix.EventSubCondition{FromBroadcasterUserID: id} }},
+	{"1", func(id string) helix.EventSubCondition { return helix.EventSubCondition{ToBroadcasterUserID: id} }},
+}
+
+// subscriptionKey identifies a subscription by type and condition.
+func subscriptionKey(typ string, c helix.EventSubCondition) string {
+	return typ + "/" + c.BroadcasterUserID + "/" + c.FromBroadcasterUserID + "/" + c.ToBroadcasterUserID
+}
+
+// planSubscriptionsWith is planSubscriptions, adding the raid
+// subscriptions if raids is set.
+func planSubscriptionsWith(ids []string, existing []helix.EventSubSubscription, callback, secret string, raids bool) subscriptionPlan {
 	var plan subscriptionPlan
 	have := map[string]bool{}
 	for _, sub := range existing {
@@ -72,20 +94,29 @@ func planSubscriptions(ids []string, existing []helix.EventSubSubscription, call
 			plan.remove = append(plan.remove, sub)
 			continue
 		}
-		have[sub.Type+"/"+sub.Condition.BroadcasterUserID] = true
+		have[subscriptionKey(sub.Type, sub.Condition)] = true
+	}
+	want := func(typ, version string, cond helix.EventSubCondition) {
+		key := subscriptionKey(typ, cond)
+		if have[key] {
+			return
+		}
+		have[key] = true
+		plan.create = append(plan.create, helix.EventSubSubscription{
+			Type:      typ,
+			Version:   version,
+			Condition: cond,
+			Transport: helix.EventSubTransport{Method: "webhook", Callback: callback, Secret: secret},
+		})
 	}
 	for _, id := range ids {
 		for _, w := range wantedSubscriptions {
-			if have[w.typ+"/"+id] {
-				continue
+			want(w.typ, w.version, helix.EventSubCondition{BroadcasterUserID: id})
+		}
+		if raids {
+			for _, r := range raidSubscriptions {
+				want(helix.EventSubTypeChannelRaid, r.version, r.cond(id))
 			}
-			have[w.typ+"/"+id] = true
-			plan.create = append(plan.create, helix.EventSubSubscription{
-				Type:      w.typ,
-				Version:   w.version,
-				Condition: helix.EventSubCondition{BroadcasterUserID: id},
-				Transport: helix.EventSubTransport{Method: "webhook", Callback: callback, Secret: secret},
-			})
 		}
 	}
 	return plan
@@ -122,7 +153,7 @@ func (s *StreamersRepo) syncSubscriptions() {
 		return
 	}
 
-	plan := planSubscriptions(ids, existing, s.callbackURL, s.secret)
+	plan := planSubscriptionsWith(ids, existing, s.callbackURL, s.secret, s.live != nil)
 	var removed, created, failed []string
 	for _, sub := range plan.remove {
 		desc := fmt.Sprintf("%s %s (%s)", sub.Type, sub.Condition.BroadcasterUserID, sub.Status)
@@ -138,6 +169,11 @@ func (s *StreamersRepo) syncSubscriptions() {
 	}
 	for i, sub := range plan.create {
 		desc := sub.Type + " " + sub.Condition.BroadcasterUserID
+		if c := sub.Condition; c.FromBroadcasterUserID != "" {
+			desc += "from " + c.FromBroadcasterUserID
+		} else if c.ToBroadcasterUserID != "" {
+			desc += "to " + c.ToBroadcasterUserID
+		}
 		if budget >= 0 && i >= budget {
 			failed = append(failed, fmt.Sprintf("create %s and %d more: EventSub cost limit reached", desc, len(plan.create)-i-1))
 			break
