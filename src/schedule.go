@@ -110,8 +110,12 @@ type scheduleState struct {
 
 	// adherence is each streamer's track record of keeping their schedule.
 	adherence *adherenceTracker
-	// history is each streamer's recent streams from third-party trackers.
-	history *streamHistory
+	// habits are each streamer's usual weekly slots (stream_history.go),
+	// recomputed after every refresh; guarded by mu.
+	habits map[string][]habitSlot
+	// past overrides where past streams come from (tests); nil reads
+	// bot-live-data's database.
+	past pastStreamsFunc
 
 	// preliveDone remembers segments already turned into a 🟡 marker (or
 	// skipped), so each scheduled start triggers at most one site commit.
@@ -126,7 +130,6 @@ func newScheduleState(client scheduleClient) *scheduleState {
 		byID:        map[string]*broadcasterSchedule{},
 		preliveDone: map[string]time.Time{},
 		adherence:   newAdherenceTracker(),
-		history:     newStreamHistory(defaultHistorySources()...),
 	}
 }
 

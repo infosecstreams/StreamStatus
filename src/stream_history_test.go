@@ -2,176 +2,10 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
-
-	log "github.com/sirupsen/logrus"
 )
-
-func useTrackerServer(t *testing.T, h http.HandlerFunc) *int {
-	t.Helper()
-	var n int
-	var mu sync.Mutex
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		n++
-		mu.Unlock()
-		h(w, r)
-	}))
-	t.Cleanup(srv.Close)
-	oldSG, oldTT := sullyGnomeBase, twitchTrackerBase
-	sullyGnomeBase, twitchTrackerBase = srv.URL+"/sg", srv.URL+"/tt"
-	t.Cleanup(func() { sullyGnomeBase, twitchTrackerBase = oldSG, oldTT })
-	return &n
-}
-
-func sgRows(starts ...time.Time) string {
-	var rows []string
-	for _, s := range starts {
-		rows = append(rows, fmt.Sprintf(`{"startDateTime":%q,"length":120,"channelurl":"x"}`, s.Format(time.RFC3339)))
-	}
-	return strings.Join(rows, ",")
-}
-
-func TestSullyGnomeSource(t *testing.T) {
-	since := schedNow.Add(-historyWindow)
-	old := since.Add(-time.Hour)
-	calls := useTrackerServer(t, func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/sg/channel/alpha/90/streams":
-			fmt.Fprint(w, `<script>var PageInfo = {"x":{"urlpart":"other","id":5},"y":{"urlpart":"alpha","id":3666580,"name":"Alpha"}};</script>`)
-		case r.URL.Path == "/sg/channel/ghost/90/streams":
-			fmt.Fprint(w, `<html>no channel</html>`)
-		case strings.HasPrefix(r.URL.Path, "/sg/api/tables/channeltables/streams/90/3666580/ /1/1/desc/0/100"):
-			fmt.Fprintf(w, `{"recordsTotal":101,"data":[%s]}`, sgRows(schedNow.Add(-time.Hour), schedNow.Add(-48*time.Hour)))
-		case strings.HasPrefix(r.URL.Path, "/sg/api/tables/channeltables/streams/90/3666580/ /1/1/desc/100/100"):
-			fmt.Fprintf(w, `{"recordsTotal":101,"data":[%s]}`, sgRows(old))
-		default:
-			t.Errorf("unexpected %s", r.URL.Path)
-			http.NotFound(w, r)
-		}
-	})
-	noSleep(t)
-	sg := &sullyGnome{ids: map[string]int{}}
-	got, err := sg.fetch("alpha", since)
-	if err != nil || len(got) != 2 || !got[0].Start.Equal(schedNow.Add(-time.Hour)) || got[0].Length != 2*time.Hour {
-		t.Fatalf("got %+v %v", got, err)
-	}
-	before := *calls
-	sg.fetch("alpha", since)
-	if *calls-before != 2 {
-		t.Errorf("channel ID not cached: %d calls", *calls-before)
-	}
-	if _, err := sg.fetch("ghost", since); err == nil {
-		t.Error("untracked channel must be an error")
-	}
-}
-
-const ttPage = `<table><tbody>
-<tr>
-    <td nowrap data-order="2026-11-18 21:06">
-        <a href="/alpha/streams"><span>2026-11-18 21:06</span></a>
-    </td>
-    <td data-order="166"><span>166</span></td>
-    <td><span>14</span></td>
-</tr>
-<tr>
-    <td nowrap data-order="2019-01-03 00:50">
-        <a href="/alpha/streams"><span>2019-01-03 00:50</span></a>
-    </td>
-    <td data-order="74"><span>74</span></td>
-</tr></tbody></table>`
-
-func TestTwitchTrackerSource(t *testing.T) {
-	useTrackerServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/tt/alpha/streams" {
-			fmt.Fprint(w, ttPage)
-			return
-		}
-		http.NotFound(w, r)
-	})
-	got, err := twitchTracker{}.fetch("alpha", schedNow.Add(-historyWindow))
-	want := time.Date(2026, 11, 18, 21, 6, 0, 0, time.UTC)
-	if err != nil || len(got) != 1 || !got[0].Start.Equal(want) || got[0].Length != 166*time.Minute {
-		t.Errorf("got %+v %v", got, err)
-	}
-	if _, err := (twitchTracker{}).fetch("ghost", schedNow); err == nil {
-		t.Error("404 must be an error")
-	}
-}
-
-type fakeHistorySource struct {
-	n       string
-	streams map[string][]pastStream
-	err     error
-}
-
-func (f *fakeHistorySource) name() string { return f.n }
-func (f *fakeHistorySource) fetch(login string, _ time.Time) ([]pastStream, error) {
-	if f.err != nil {
-		return nil, f.err
-	}
-	if s, ok := f.streams[login]; ok {
-		return s, nil
-	}
-	return nil, errors.New("not found")
-}
-
-func TestRefreshStreamHistoryFallsBackAndKeepsOldData(t *testing.T) {
-	s, _ := newScheduleRepo(t)
-	s.refreshSchedules(direct)
-	logs := captureLogs(t)
-	primary := &fakeHistorySource{n: "sg", streams: map[string][]pastStream{"alpha": {{Start: schedNow.Add(-time.Hour), Length: time.Hour}}}}
-	fallback := &fakeHistorySource{n: "tt", streams: map[string][]pastStream{"beta": {{Start: schedNow.Add(-2 * time.Hour), Length: time.Hour}}}}
-	h := newStreamHistory(primary, fallback)
-	h.path = filepath.Join(t.TempDir(), "stream_history.json")
-	s.schedule.history = h
-
-	s.refreshStreamHistory()
-	if got, ok := h.get("1"); !ok || len(got) != 1 {
-		t.Errorf("alpha from primary: %v %v", got, ok)
-	}
-	if got, ok := h.get("2"); !ok || len(got) != 1 {
-		t.Errorf("beta from fallback: %v %v", got, ok)
-	}
-	if _, ok := h.get("9"); ok {
-		t.Error("dormant is in neither source")
-	}
-	if logs.count(log.WarnLevel) != 1 || logs.count(log.ErrorLevel) != 0 {
-		t.Errorf("one failure should warn: %d warn %d error", logs.count(log.WarnLevel), logs.count(log.ErrorLevel))
-	}
-
-	// Both trackers down: keep the old data; Error only on the 2nd run.
-	primary.err, fallback.err = errors.New("down"), errors.New("down")
-	s.refreshStreamHistory()
-	if logs.count(log.ErrorLevel) != 0 {
-		t.Error("first bad run must not alert")
-	}
-	s.refreshStreamHistory()
-	if logs.count(log.ErrorLevel) != 1 {
-		t.Error("second bad run must alert")
-	}
-	if got, _ := h.get("1"); len(got) != 1 {
-		t.Error("failed fetch dropped old data")
-	}
-
-	// The cache survives a restart.
-	h2 := newStreamHistory()
-	if err := h2.load(h.path); err != nil {
-		t.Fatal(err)
-	}
-	if got, ok := h2.get("2"); !ok || len(got) != 1 || h2.lastRun.IsZero() {
-		t.Errorf("reloaded %v %v", got, ok)
-	}
-}
 
 func TestEstimateOutcomes(t *testing.T) {
 	// Weekly Tuesday 18:00 UTC slot; next occurrence 2026-11-24.
@@ -281,9 +115,13 @@ func TestHabitsAndEstimatesInAPI(t *testing.T) {
 		}
 		streams = append(streams, pastStream{Start: schedNow.Add(2*time.Hour - time.Duration(k)*7*24*time.Hour), Length: 2 * time.Hour})
 	}
-	s.schedule.history = newStreamHistory(&fakeHistorySource{n: "sg", streams: map[string][]pastStream{"alpha": streams}})
+	s.schedule.past = func(id string, since time.Time) ([]pastStream, bool) {
+		if id == "1" {
+			return streams, true
+		}
+		return nil, true
+	}
 	s.refreshSchedules(direct)
-	s.refreshStreamHistory()
 
 	rec := get(t, s, "/streamstatus/schedule.json?login=alpha", nil)
 	var got scheduleJSON
@@ -304,44 +142,34 @@ func TestHabitsAndEstimatesInAPI(t *testing.T) {
 	}
 }
 
-// TestLiveTrackers fetches real data; run with SS_LIVE_HISTORY=login1,login2.
-func TestLiveTrackers(t *testing.T) {
-	logins := os.Getenv("SS_LIVE_HISTORY")
-	if logins == "" {
-		t.Skip("set SS_LIVE_HISTORY to fetch from SullyGnome and TwitchTracker")
-	}
-	since := time.Now().Add(-historyWindow)
-	for _, l := range strings.Split(logins, ",") {
-		for _, src := range defaultHistorySources() {
-			got, err := src.fetch(l, since)
-			slots := habits(got, time.Now())
-			t.Logf("%-14s %-13s streams=%-3d err=%v habits=%+v", l, src.name(), len(got), err, slots)
-			time.Sleep(2 * time.Second)
+// Past streams come from bot-live-data's database: the imported tracker
+// backfill and streams recorded live.
+func TestEstimatesAndHabitsFromDatabase(t *testing.T) {
+	s, f := newScheduleRepo(t)
+	f.schedules["1"][0].Data.Schedule.Segments[1].IsRecurring = true // a1, Thursdays 22:00
+	db := newTestStore(t)
+	var back []backfillStream
+	for k := 1; k <= 12; k++ {
+		if k%3 != 0 {
+			back = append(back, backfillStream{Start: schedNow.Add(2*time.Hour - time.Duration(k)*7*24*time.Hour), Length: 2 * time.Hour})
 		}
 	}
-}
+	if _, err := db.importBackfill(map[string][]backfillStream{"1": back}, schedNow); err != nil {
+		t.Fatal(err)
+	}
+	s.live = &liveState{db: db}
+	s.refreshSchedules(direct)
 
-// bot-live-data imports stream_history.json into its database (backfill.go
-// there reads only "streams": {id: [{start, length (ns)}]}). Keep this
-// format until that import has run in production.
-func TestStreamHistoryFileFormatIsStable(t *testing.T) {
-	h := newStreamHistory()
-	h.path = filepath.Join(t.TempDir(), "stream_history.json")
-	h.streams["42"] = []pastStream{{Start: time.Date(2026, 10, 22, 3, 48, 0, 0, time.UTC), Length: 177 * time.Minute}}
-	h.fetchedAt["42"] = schedNow
-	h.save()
-	b, err := os.ReadFile(h.path)
-	if err != nil {
-		t.Fatal(err)
+	if h := s.streamHabits("1"); len(h) != 1 || h[0].Weekday != time.Thursday || h[0].Minute != 22*60 {
+		t.Errorf("habits %+v", h)
 	}
-	var f struct {
-		Streams map[string][]map[string]any `json:"streams"`
+	if tr := s.scheduleTrackRecord("1"); tr.Total < 12 || tr.Estimated != tr.Total || tr.Kept != 8 {
+		t.Errorf("track record %+v, want 8 kept, all estimated", tr)
 	}
-	if err := json.Unmarshal(b, &f); err != nil {
-		t.Fatal(err)
-	}
-	s := f.Streams["42"]
-	if len(s) != 1 || s[0]["start"] != "2026-10-22T03:48:00Z" || s[0]["length"] != float64(177*time.Minute) || len(s[0]) != 2 {
-		t.Errorf("format changed: %s", b)
+	// No database: nothing, and no crash.
+	s.live = nil
+	s.refreshSchedules(direct)
+	if h := s.streamHabits("1"); h != nil {
+		t.Errorf("habits without a database: %+v", h)
 	}
 }
