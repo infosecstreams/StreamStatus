@@ -139,7 +139,7 @@ func TestFetchLiveByLoginFailsOnAnyBatchError(t *testing.T) {
 	f := &fakeStreams{fn: func(call int, _ *helix.StreamsParams) (*helix.StreamsResponse, error) {
 		if call == 2 {
 			r := streamsResp()
-			r.ErrorStatus, r.Error, r.ErrorMessage = 401, "Unauthorized", "Invalid OAuth token"
+			r.StatusCode, r.ErrorStatus, r.Error, r.ErrorMessage = 401, 401, "Unauthorized", "Invalid OAuth token"
 			return r, nil
 		}
 		return streamsResp(), nil

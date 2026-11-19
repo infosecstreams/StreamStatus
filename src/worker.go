@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -39,8 +40,29 @@ var onlineRetryDelays = []time.Duration{
 	15 * time.Second, 15 * time.Second, 15 * time.Second,
 }
 
-// sleep is swapped out in tests.
-var sleep = time.Sleep
+// sleep and timeNow are swapped out in tests.
+var (
+	sleep   = time.Sleep
+	timeNow = time.Now
+)
+
+// noteEvent records that an EventSub event for streamer was just handled.
+// Callers must hold s.mutex.
+func (s *StreamersRepo) noteEvent(streamer string) {
+	if streamer == "" {
+		return
+	}
+	if s.lastEvent == nil {
+		s.lastEvent = map[string]time.Time{}
+	}
+	now := timeNow()
+	s.lastEvent[strings.ToLower(streamer)] = now
+	for k, t := range s.lastEvent {
+		if now.Sub(t) > time.Hour {
+			delete(s.lastEvent, k)
+		}
+	}
+}
 
 // startWorker starts the single goroutine that does all git work, in the
 // order events arrived, so concurrent webhooks can't race on the worktree
@@ -86,6 +108,10 @@ func (s *StreamersRepo) process(job statusJob) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
+	if job.kind != jobReconcile {
+		s.noteEvent(job.userName)
+	}
+
 	switch job.kind {
 	case jobOffline:
 		log.Printf("processing offline event for: %s (%s)", job.userName, job.userID)
@@ -115,7 +141,19 @@ func (s *StreamersRepo) process(job statusJob) {
 
 	case jobChannelUpdate:
 		log.Printf("processing channel update event for: %s (%s)", job.userName, job.userID)
-		s.applyStatus(job.userName, contains(VALID_GAMES, job.game), job.game, job.language, nil)
+		// channel.update also fires for offline channels (title or category
+		// edits), so only touch status if the streamer is actually live.
+		stream, live, err := s.fetchStreamInfo(job.userID)
+		if err != nil {
+			log.Errorf("channel update for %s: fetching stream info failed, leaving status unchanged: %s", job.userName, err)
+			return
+		}
+		if !live {
+			log.Infof("channel update for offline channel %s (category %q); leaving status unchanged", job.userName, job.game)
+			return
+		}
+		// The event's category and language are newer than Helix's.
+		s.applyStatus(job.userName, contains(VALID_GAMES, job.game), job.game, job.language, stream.Tags)
 
 	case jobReconcile:
 		s.reconcile()

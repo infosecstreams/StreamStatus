@@ -32,6 +32,7 @@ func (f *fakeStreams) GetStreams(p *helix.StreamsParams) (*helix.StreamsResponse
 
 func streamsResp(streams ...helix.Stream) *helix.StreamsResponse {
 	r := &helix.StreamsResponse{}
+	r.StatusCode = 200
 	r.Data.Streams = streams
 	return r
 }
@@ -335,4 +336,70 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, "note: git fixture tests need the git CLI on PATH")
 	}
 	os.Exit(code)
+}
+
+// channel.update fires for offline channels too (title/category edits);
+// that must not mark anyone 🟢.
+func TestChannelUpdateWhileOfflineChangesNothing(t *testing.T) {
+	s, origin := newGitFixture(t, []string{offlineLine("alpha")}, nil, "alpha,\n", "")
+	s.client = &fakeStreams{fn: func(int, *helix.StreamsParams) (*helix.StreamsResponse, error) {
+		return streamsResp(), nil
+	}}
+	before := gitOutput(t, origin, "rev-parse", "main")
+
+	s.process(statusJob{kind: jobChannelUpdate, userID: "1", userName: "alpha", game: "Just Chatting", language: "en"})
+
+	if gitOutput(t, origin, "rev-parse", "main") != before {
+		t.Errorf("offline channel.update changed the site:\n%s", gitOutput(t, origin, "show", "main:index.md"))
+	}
+}
+
+func TestChannelUpdateWhileLiveUsesEventCategory(t *testing.T) {
+	s, origin := newGitFixture(t, []string{offlineLine("alpha")}, nil, "alpha,\n", "")
+	s.client = &fakeStreams{fn: func(int, *helix.StreamsParams) (*helix.StreamsResponse, error) {
+		// Helix still shows the old category; the event is newer.
+		return streamsResp(helix.Stream{UserLogin: "alpha", UserName: "alpha", GameName: "Minecraft", Tags: []string{"infosec"}}), nil
+	}}
+
+	s.process(statusJob{kind: jobChannelUpdate, userID: "1", userName: "alpha", game: "Science & Technology", language: "en"})
+
+	idx := gitOutput(t, origin, "show", "main:index.md")
+	if !strings.Contains(idx, "🟢 | `alpha`") || !strings.Contains(idx, "Science & Technology, Tags: infosec") {
+		t.Errorf("want alpha online in the event's category:\n%s", idx)
+	}
+}
+
+// Reconciliation must not undo a fresh event because Helix lags behind it.
+func TestReconcileLeavesFreshEventsAlone(t *testing.T) {
+	now := time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)
+	old := timeNow
+	timeNow = func() time.Time { return now }
+	t.Cleanup(func() { timeNow = old })
+
+	s, origin := newGitFixture(t, []string{offlineLine("alpha"), onlineLine("beta")}, nil, "alpha,\nbeta,\n", "")
+	// Helix still lists alpha, who just went offline, and doesn't list beta.
+	s.client = &fakeStreams{fn: func(int, *helix.StreamsParams) (*helix.StreamsResponse, error) {
+		return streamsResp(helix.Stream{UserLogin: "alpha", UserName: "alpha", GameName: "Just Chatting"}), nil
+	}}
+	s.noteEvent("Alpha")
+	before := gitOutput(t, origin, "rev-parse", "main")
+
+	timeNow = func() time.Time { return now.Add(2 * time.Minute) }
+	s.reconcile()
+	idx := gitOutput(t, origin, "show", "main:index.md")
+	if !strings.Contains(idx, "&nbsp; | `alpha`") {
+		t.Errorf("reconcile flipped alpha back online 2m after its offline event:\n%s", idx)
+	}
+	if !strings.Contains(idx, "&nbsp; | `beta`") {
+		t.Errorf("beta (no recent event) should still be corrected:\n%s", idx)
+	}
+	if gitOutput(t, origin, "rev-parse", "main") == before {
+		t.Error("expected beta's correction to be committed")
+	}
+
+	timeNow = func() time.Time { return now.Add(6 * time.Minute) }
+	s.reconcile()
+	if idx := gitOutput(t, origin, "show", "main:index.md"); !strings.Contains(idx, "🟢 | `alpha`") {
+		t.Errorf("after the grace period Helix should win:\n%s", idx)
+	}
 }

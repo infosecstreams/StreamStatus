@@ -70,6 +70,9 @@ type StreamersRepo struct {
 	// reconcileInactive lets reconciliation reactivate live streamers that
 	// are on the inactive list (SS_RECONCILE_INACTIVE).
 	reconcileInactive bool
+	// lastEvent is when each streamer (lowercased) last had an EventSub
+	// event handled; reconciliation leaves them alone for a while after.
+	lastEvent map[string]time.Time
 }
 
 // streamsClient is the slice of the Helix API the bot uses; *helix.Client
@@ -626,11 +629,22 @@ func (s *StreamersRepo) fetchStreamInfo(user_id string) (stream helix.Stream, li
 	if err != nil {
 		return helix.Stream{}, false, err
 	}
-	if streams.ErrorStatus != 0 {
-		return helix.Stream{}, false, fmt.Errorf("error fetching stream info status=%d %s error=%s", streams.ErrorStatus, streams.Error, streams.ErrorMessage)
+	if err := helixError(streams.ResponseCommon); err != nil {
+		return helix.Stream{}, false, err
 	}
 	if len(streams.Data.Streams) == 0 {
 		return helix.Stream{}, false, nil
 	}
 	return streams.Data.Streams[0], true, nil
+}
+
+// helixError reports a failed Helix response. It goes by the final HTTP
+// status: after helix renews an expired token and retries, the response
+// still carries the first attempt's 401 in Error/ErrorStatus/ErrorMessage
+// even though the retry succeeded.
+func helixError(rc helix.ResponseCommon) error {
+	if rc.StatusCode == http.StatusOK {
+		return nil
+	}
+	return fmt.Errorf("helix status=%d %s: %s", rc.StatusCode, rc.Error, rc.ErrorMessage)
 }

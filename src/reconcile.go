@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"strings"
 	"time"
 
@@ -11,8 +10,16 @@ import (
 
 // defaultReconcileInterval is how often the bot re-checks every streamer's
 // live state against Helix, to recover from EventSub deliveries that never
-// arrived.
-const defaultReconcileInterval = 15 * time.Minute
+// arrived. One run costs ceil(streamers/100) Helix calls (~4-7), far below
+// the 800 points/minute app-token rate limit; the real cost of a short
+// interval is a site rebuild per correction.
+const defaultReconcileInterval = 5 * time.Minute
+
+// reconcileGrace is how long after an EventSub event reconciliation leaves
+// that streamer alone. Helix /streams lags EventSub by a minute or two
+// (still listing a stream that just ended, or not yet listing one that
+// just started), so correcting sooner would undo a fresh event and flap.
+const reconcileGrace = 5 * time.Minute
 
 // helixLoginBatch is the max number of user_login values per /streams call.
 const helixLoginBatch = 100
@@ -72,7 +79,7 @@ func (s *StreamersRepo) reconcile() {
 		return
 	}
 
-	changes := diffLiveState(active, inactive, onlineStreamers(s.indexMdText), live)
+	changes := skipRecentlyEvented(diffLiveState(active, inactive, onlineStreamers(s.indexMdText), live), s.lastEvent, timeNow(), reconcileGrace)
 	log.Infof("reconcile: %d active, %d inactive checked, %d live, %d corrections", len(active), len(inactive), len(live), len(changes))
 	for _, c := range changes {
 		log.Warnf("reconcile: correcting %s to online=%v", c.name, c.online)
@@ -149,8 +156,8 @@ func (s *StreamersRepo) fetchLiveByLogin(logins []string) (map[string]helix.Stre
 		if err != nil {
 			return nil, err
 		}
-		if resp.ErrorStatus != 0 {
-			return nil, fmt.Errorf("helix /streams status=%d %s: %s", resp.ErrorStatus, resp.Error, resp.ErrorMessage)
+		if err := helixError(resp.ResponseCommon); err != nil {
+			return nil, err
 		}
 		for _, st := range resp.Data.Streams {
 			live[strings.ToLower(st.UserLogin)] = st
@@ -172,4 +179,18 @@ func csvNames(path string) ([]string, error) {
 		}
 	}
 	return names, nil
+}
+
+// skipRecentlyEvented drops changes for streamers that had an EventSub
+// event within grace of now; the event is fresher than Helix.
+func skipRecentlyEvented(changes []statusChange, lastEvent map[string]time.Time, now time.Time, grace time.Duration) []statusChange {
+	kept := changes[:0:0]
+	for _, c := range changes {
+		if t, ok := lastEvent[strings.ToLower(c.name)]; ok && now.Sub(t) < grace {
+			log.Infof("reconcile: %s had an event %s ago, not overriding it", c.name, now.Sub(t).Round(time.Second))
+			continue
+		}
+		kept = append(kept, c)
+	}
+	return kept
 }

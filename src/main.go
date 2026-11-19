@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
@@ -10,7 +11,6 @@ import (
 	"time"
 
 	httpauth "github.com/go-git/go-git/v5/plumbing/transport/http"
-	"github.com/nicklaw5/helix/v2"
 	"github.com/nikoksr/notify"
 	"github.com/nikoksr/notify/service/pushbullet"
 	log "github.com/sirupsen/logrus"
@@ -26,12 +26,11 @@ func main() {
 	fmt.Printf("%s\n", buildInfo.String())
 
 	// Setup file and repo paths.
-	var repoUrl string
-	if len(os.Getenv("SS_GH_REPO")) == 0 {
-		log.Info("no SS_GH_REPO specified in environment, defaulting to: https://github.com/infosecstreams/infosecstreams.github.io")
-		repoUrl = "https://github.com/infosecstreams/infosecstreams.github.io"
+	repoUrl, repoPath, err := repoFromEnv(os.Getenv("SS_GH_REPO"))
+	if err != nil {
+		log.Fatalf("error: %s", err)
 	}
-	repoPath := strings.Split(repoUrl, "/")[4]
+	log.Infof("site repository: %s", repoUrl)
 	filePath := repoPath + "/index.md"
 	iFilePath := repoPath + "/inactive.md"
 	activeCsvPath := repoPath + "/streamers.csv"
@@ -50,21 +49,10 @@ func main() {
 		log.Fatalln("error: no TW_CLIENT_ID and/or TW_CLIENT_SECRET specified in environment! https://dev.twitch.tv/console/app")
 	}
 
-	client, err := helix.NewClient(&helix.Options{
-		ClientID:     os.Getenv("TW_CLIENT_ID"),
-		ClientSecret: os.Getenv("TW_CLIENT_SECRET"),
-	})
+	client, tokenTTL, err := newTwitchClient(os.Getenv("TW_CLIENT_ID"), os.Getenv("TW_CLIENT_SECRET"))
 	if err != nil {
-		log.Fatalln(err)
-		return
+		log.Fatalf("error: could not get a Twitch app access token: %s", err)
 	}
-
-	access_token, err := client.RequestAppAccessToken([]string{})
-	if err != nil {
-		log.Fatalln(err)
-		return
-	}
-	client.SetAppAccessToken(access_token.Data.AccessToken)
 
 	// Setup notifications
 	if len(os.Getenv("SS_PUSHBULLET_APIKEY")) == 0 || len(os.Getenv("SS_PUSHBULLET_DEVICES")) == 0 {
@@ -76,6 +64,12 @@ func main() {
 		pushbullet.AddReceivers(device)
 	}
 	notifier.UseServices(pushbullet)
+
+	go keepAppTokenFresh(client, tokenTTL, func(err error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		notifier.Send(ctx, "Twitch app token renewal failed", err.Error())
+	})
 
 	// Create StreamersRepo object
 	var repo = StreamersRepo{
@@ -96,7 +90,7 @@ func main() {
 	if v := os.Getenv("SS_RECONCILE_INTERVAL"); v != "" {
 		d, err := time.ParseDuration(v)
 		if err != nil || d < time.Minute {
-			log.Fatalf("error: invalid SS_RECONCILE_INTERVAL %q (want a duration >= 1m, e.g. 15m)", v)
+			log.Fatalf("error: invalid SS_RECONCILE_INTERVAL %q (want a duration >= 1m, e.g. 5m)", v)
 		}
 		reconcileInterval = d
 	}
