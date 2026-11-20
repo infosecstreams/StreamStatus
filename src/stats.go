@@ -123,6 +123,8 @@ type sessionRow struct {
 	id         int64
 	userID     string
 	start, end time.Time // end is zero while open
+
+	followersStart, followersEnd sql.NullInt64
 }
 
 type viewerSample struct {
@@ -151,6 +153,14 @@ type statsData struct {
 	peakAll   map[string]int
 	followers map[string][]followerPoint // oldest first
 	titles    map[string][]titleEntry    // newest first
+
+	// Extra detail (stats_more.go).
+	tags        map[int64][]string // by session
+	titlesSince map[string][]titleAt
+	chat        map[int64]chatRow // by session
+	raids       []raidRecord      // last 90 days, oldest first
+	videos      map[string][]mediaItem
+	clips       map[string][]mediaItem
 }
 
 func unixOrZero(v sql.NullInt64) time.Time {
@@ -177,7 +187,7 @@ func (st *store) loadStatsData(now time.Time) (*statsData, error) {
 		return nil, err
 	}
 
-	rows, err := st.db.Query(`SELECT id, user_id, started_at, ended_at FROM sessions ORDER BY started_at, id`)
+	rows, err := st.db.Query(`SELECT id, user_id, started_at, ended_at, followers_start, followers_end FROM sessions ORDER BY started_at, id`)
 	if err != nil {
 		return nil, err
 	}
@@ -185,7 +195,7 @@ func (st *store) loadStatsData(now time.Time) (*statsData, error) {
 		var r sessionRow
 		var start int64
 		var end sql.NullInt64
-		if err := rows.Scan(&r.id, &r.userID, &start, &end); err != nil {
+		if err := rows.Scan(&r.id, &r.userID, &start, &end, &r.followersStart, &r.followersEnd); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -297,7 +307,13 @@ func (st *store) loadStatsData(now time.Time) (*statsData, error) {
 		d.titles[id] = append(d.titles[id], t)
 	}
 	rows.Close()
-	return d, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := st.loadMoreStats(d, now); err != nil {
+		return nil, err
+	}
+	return d, nil
 }
 
 // --- recording (worker)
@@ -397,7 +413,7 @@ func (s *StreamersRepo) fetchFollowers() {
 // the first reconcile, which loads the roster) and every statsInterval.
 func (s *StreamersRepo) startStatsJobs(interval time.Duration) {
 	queue := func() {
-		if !s.enqueue(statusJob{kind: jobFollowers}) || !s.enqueue(statusJob{kind: jobStats}) {
+		if !s.enqueue(statusJob{kind: jobFollowers}) || !s.enqueue(statusJob{kind: jobMedia}) || !s.enqueue(statusJob{kind: jobStats}) {
 			log.Warn("stats skipped: event queue full")
 		}
 	}
@@ -433,6 +449,9 @@ type recentStream struct {
 	Categories  []string `json:"categories"`
 	AvgViewers  *float64 `json:"avg_viewers,omitempty"`
 	PeakViewers *int     `json:"peak_viewers,omitempty"`
+	// FollowersGained is the follower total at the end minus at the start.
+	FollowersGained *int         `json:"followers_gained,omitempty"`
+	Chat            *chatSummary `json:"chat,omitempty"`
 }
 
 // heatmap is time live per UTC weekday (Monday first) and hour, as the
@@ -475,6 +494,8 @@ type streamerStats struct {
 	Heatmap90d    heatmap        `json:"heatmap_90d"`
 	RecentStreams []recentStream `json:"recent_streams"`
 	RecentTitles  []titleEntry   `json:"recent_titles"`
+
+	streamerExtras
 }
 
 // statsSummary is one streamer's row in /api/stats.json.
@@ -491,6 +512,9 @@ type statsSummary struct {
 	FollowersGained30d *int     `json:"followers_gained_30d,omitempty"`
 	CurrentStreakWeeks int      `json:"current_streak_weeks"`
 	LastLiveAt         string   `json:"last_live_at,omitempty"`
+	Topics             []string `json:"topics"` // top 3 of topics_30d
+	RaidsOut30d        int      `json:"raids_out_30d"`
+	RaidsIn30d         int      `json:"raids_in_30d"`
 }
 
 type communityTotals struct {
@@ -513,6 +537,8 @@ type communityStats struct {
 	// infosec categories per UTC weekday (Monday first) and hour.
 	LiveHeatmap90d heatmap        `json:"live_heatmap_90d"`
 	Streamers      []statsSummary `json:"streamers"`
+
+	communityExtras
 }
 
 func round1(x float64) float64 { return math.Round(x*10) / 10 }
@@ -615,6 +641,7 @@ func computeStreamerStats(id string, d *statsData, now time.Time) streamerStats 
 	var vs30, vd30, vsPrev, vdPrev float64 // viewer-seconds and seconds
 	peak30 := -1
 	var recent []recentStream
+	acc := &extrasAcc{topics: map[string]int{}, tags: map[string]int{}, tagName: map[string]string{}}
 
 	for _, ss := range d.sessions[id] {
 		end := ss.end
@@ -716,6 +743,7 @@ func computeStreamerStats(id string, d *statsData, now time.Time) streamerStats 
 			rs.AvgViewers = ptrF(round1(sessVS / sessVD))
 			rs.PeakViewers = ptrI(sessPeak)
 		}
+		sessionExtras(&rs, acc, ss, end, valid30, d)
 		recent = append(recent, rs)
 	}
 
@@ -795,6 +823,7 @@ func computeStreamerStats(id string, d *statsData, now time.Time) streamerStats 
 	}
 	out.RecentStreams = append([]recentStream{}, recent...)
 	out.RecentTitles = append([]titleEntry{}, d.titles[id]...)
+	out.streamerExtras = finishExtras(id, acc, out.AvgViewers30d, d, now)
 	return out
 }
 
@@ -843,6 +872,7 @@ type statsDocs struct {
 	all     *apiDoc
 	byID    map[string]*apiDoc
 	byLogin map[string]string // lowercase login (current or roster) -> id
+	raids   *apiDoc
 }
 
 // buildStats recomputes every stats document. Runs on the worker.
@@ -857,6 +887,7 @@ func (l *liveState) buildStats(now time.Time) {
 	}
 	docs := &statsDocs{byID: map[string]*apiDoc{}, byLogin: map[string]string{}}
 	comm := communityStats{GeneratedAt: rfc3339(now), RecordingSince: rfc3339(d.since), Streamers: []statsSummary{}}
+	var allStats []streamerStats
 	commCats := map[string]*categoryHours{}
 	var commHeat heatmap
 
@@ -888,7 +919,9 @@ func (l *liveState) buildStats(now time.Time) {
 			AvgViewers30d: s.AvgViewers30d, PeakViewers30d: s.PeakViewers30d,
 			Followers: s.Followers, FollowersGained30d: s.FollowersGained30d,
 			CurrentStreakWeeks: s.CurrentStreakWeeks, LastLiveAt: s.LastLiveAt,
+			Topics: topTopicNames(s.Topics30d, 3), RaidsOut30d: s.RaidsOut30d, RaidsIn30d: s.RaidsIn30d,
 		})
+		allStats = append(allStats, s)
 		t := &comm.Totals
 		t.TrackedStreamers++
 		t.Hours7d += s.Hours.D7
@@ -941,12 +974,17 @@ func (l *liveState) buildStats(now time.Time) {
 			}
 		}
 	}
+	comm.communityExtras = buildCommunityExtras(allStats, d, l.roster, now)
 	all, err := newJSONDoc(comm, statsMaxAge)
 	if err != nil {
 		log.Errorf("stats: encoding community stats: %s", err)
 		return
 	}
 	docs.all = all
+	if docs.raids, err = newJSONDoc(l.buildRaidGraph(d, now), statsMaxAge); err != nil {
+		log.Errorf("stats: encoding raid graph: %s", err)
+		return
+	}
 	l.statsSnap.Store(docs)
 }
 

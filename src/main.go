@@ -105,6 +105,7 @@ func main() {
 		repo.live = live
 		repo.users = client
 		repo.follows = client
+		repo.media = client
 		live.backfillPath = os.Getenv("SS_BACKFILL_PATH")
 		if live.backfillPath == "" {
 			live.backfillPath = defaultBackfillPath(dbPath)
@@ -127,6 +128,14 @@ func main() {
 	if repo.live != nil {
 		repo.startLiveRefresh(liveRefreshInterval)
 		repo.startStatsJobs(statsInterval)
+		login, rt := os.Getenv("SS_CHAT_LOGIN"), os.Getenv("SS_CHAT_REFRESH_TOKEN")
+		if login != "" && rt != "" {
+			tok := &chatToken{s: &repo, client: client, envRT: rt}
+			newChatBot(&repo, login, tok.get).start()
+			log.Printf("chat: counting chat activity as %s", login)
+		} else {
+			log.Info("no SS_CHAT_LOGIN/SS_CHAT_REFRESH_TOKEN, chat stats disabled")
+		}
 	}
 	// --- bot-schedule: schedule polling and /api/schedule.{json,ics} ---
 	repo.schedule = newScheduleState(client)
