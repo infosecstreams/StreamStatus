@@ -508,7 +508,7 @@ func (sg *sullyGnome) fetch(login string, since time.Time) ([]pastStream, error)
 	}
 	var out []pastStream
 	for page := 0; page < historyMaxPages; page++ {
-		body, code, err := historyGet(fmt.Sprintf("%s/streamstatus/tables/channeltables/streams/90/%d/%%20/1/1/desc/%d/100", sullyGnomeBase, id, page*100))
+		body, code, err := historyGet(fmt.Sprintf("%s/api/tables/channeltables/streams/90/%d/%%20/1/1/desc/%d/100", sullyGnomeBase, id, page*100))
 		if err != nil {
 			return nil, err
 		}

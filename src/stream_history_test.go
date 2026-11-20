@@ -50,9 +50,9 @@ func TestSullyGnomeSource(t *testing.T) {
 			fmt.Fprint(w, `<script>var PageInfo = {"x":{"urlpart":"other","id":5},"y":{"urlpart":"alpha","id":3666580,"name":"Alpha"}};</script>`)
 		case r.URL.Path == "/sg/channel/ghost/90/streams":
 			fmt.Fprint(w, `<html>no channel</html>`)
-		case strings.HasPrefix(r.URL.Path, "/sg/streamstatus/tables/channeltables/streams/90/3666580/ /1/1/desc/0/100"):
+		case strings.HasPrefix(r.URL.Path, "/sg/api/tables/channeltables/streams/90/3666580/ /1/1/desc/0/100"):
 			fmt.Fprintf(w, `{"recordsTotal":101,"data":[%s]}`, sgRows(schedNow.Add(-time.Hour), schedNow.Add(-48*time.Hour)))
-		case strings.HasPrefix(r.URL.Path, "/sg/streamstatus/tables/channeltables/streams/90/3666580/ /1/1/desc/100/100"):
+		case strings.HasPrefix(r.URL.Path, "/sg/api/tables/channeltables/streams/90/3666580/ /1/1/desc/100/100"):
 			fmt.Fprintf(w, `{"recordsTotal":101,"data":[%s]}`, sgRows(old))
 		default:
 			t.Errorf("unexpected %s", r.URL.Path)
