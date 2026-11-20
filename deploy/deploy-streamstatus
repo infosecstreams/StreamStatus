@@ -41,7 +41,7 @@ COSIGN=/usr/local/bin/cosign
 COMPOSE=docker-compose
 READY_TIMEOUT=120   # seconds to wait for READY_PATTERN
 STABLE_SECONDS=30   # then the container must stay up this long, no restarts
-HEALTH_URL=''       # optional: also require HTTP 200 here, e.g. http://127.0.0.1:8080/api/status.json
+HEALTH_URL=''       # optional: also require HTTP 200 here, e.g. http://127.0.0.1:8080/streamstatus/status.json
 if [[ -z "${SSH_CONNECTION:-}" ]]; then
   HOSTING_DIR=${DEPLOY_HOSTING_DIR:-$HOSTING_DIR}
   COSIGN=${DEPLOY_COSIGN:-$COSIGN}

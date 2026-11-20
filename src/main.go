@@ -90,19 +90,19 @@ func main() {
 		repo.statusCommitsOff = !commit
 	}
 	if repo.statusCommitsOff {
-		log.Warn("SS_COMMIT_STATUS=false: live status is only served by /api/status.json; only roster moves are committed")
+		log.Warn("SS_COMMIT_STATUS=false: live status is only served by /streamstatus/status.json; only roster moves are committed")
 	}
 
 	// Live state and stream history. Without the database the bot still
-	// keeps the site in sync, it just can't serve /api/status.json.
+	// keeps the site in sync, it just can't serve /streamstatus/status.json.
 	dbPath := os.Getenv("SS_DB_PATH")
 	if dbPath == "" {
 		dbPath = defaultDBPath
 	}
 	if db, err := openStore(dbPath); err != nil {
-		log.Errorf("opening stream history database %s failed, /api/status.json disabled: %s", dbPath, err)
+		log.Errorf("opening stream history database %s failed, /streamstatus/status.json disabled: %s", dbPath, err)
 	} else if live, err := newLiveState(db); err != nil {
-		log.Errorf("loading stream history database %s failed, /api/status.json disabled: %s", dbPath, err)
+		log.Errorf("loading stream history database %s failed, /streamstatus/status.json disabled: %s", dbPath, err)
 	} else {
 		log.Printf("stream history database: %s", dbPath)
 		repo.live = live
@@ -143,7 +143,7 @@ func main() {
 			log.Info("no SS_CHAT_LOGIN/SS_CHAT_REFRESH_TOKEN, chat stats disabled")
 		}
 	}
-	// --- bot-schedule: schedule polling and /api/schedule.{json,ics} ---
+	// --- bot-schedule: schedule polling and /streamstatus/schedule.{json,ics} ---
 	repo.schedule = newScheduleState(client)
 	if err := repo.schedule.adherence.loadHistory(scheduleHistoryPath()); err != nil {
 		log.Warnf("schedule track record: %s", err)

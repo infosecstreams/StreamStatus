@@ -50,9 +50,9 @@ func TestSullyGnomeSource(t *testing.T) {
 			fmt.Fprint(w, `<script>var PageInfo = {"x":{"urlpart":"other","id":5},"y":{"urlpart":"alpha","id":3666580,"name":"Alpha"}};</script>`)
 		case r.URL.Path == "/sg/channel/ghost/90/streams":
 			fmt.Fprint(w, `<html>no channel</html>`)
-		case strings.HasPrefix(r.URL.Path, "/sg/api/tables/channeltables/streams/90/3666580/ /1/1/desc/0/100"):
+		case strings.HasPrefix(r.URL.Path, "/sg/streamstatus/tables/channeltables/streams/90/3666580/ /1/1/desc/0/100"):
 			fmt.Fprintf(w, `{"recordsTotal":101,"data":[%s]}`, sgRows(schedNow.Add(-time.Hour), schedNow.Add(-48*time.Hour)))
-		case strings.HasPrefix(r.URL.Path, "/sg/api/tables/channeltables/streams/90/3666580/ /1/1/desc/100/100"):
+		case strings.HasPrefix(r.URL.Path, "/sg/streamstatus/tables/channeltables/streams/90/3666580/ /1/1/desc/100/100"):
 			fmt.Fprintf(w, `{"recordsTotal":101,"data":[%s]}`, sgRows(old))
 		default:
 			t.Errorf("unexpected %s", r.URL.Path)
@@ -285,7 +285,7 @@ func TestHabitsAndEstimatesInAPI(t *testing.T) {
 	s.refreshSchedules(direct)
 	s.refreshStreamHistory()
 
-	rec := get(t, s, "/api/schedule.json?login=alpha", nil)
+	rec := get(t, s, "/streamstatus/schedule.json?login=alpha", nil)
 	var got scheduleJSON
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
@@ -298,7 +298,7 @@ func TestHabitsAndEstimatesInAPI(t *testing.T) {
 		got.Habits[0].Slots[0].Time != "22:00" || got.Habits[0].Next != "2026-11-19T22:00:00Z" {
 		t.Errorf("habits %s", rec.Body)
 	}
-	lines := unfoldICS(t, get(t, s, "/api/schedule.ics?login=alpha", nil).Body.String())
+	lines := unfoldICS(t, get(t, s, "/streamstatus/schedule.ics?login=alpha", nil).Body.String())
 	if ev := eventLines(lines, "UID:a1"); !containsPrefix(ev, "DESCRIPTION:") || !strings.Contains(strings.Join(ev, "\n"), "estimated from stream history") {
 		t.Errorf("ICS: %q", ev)
 	}

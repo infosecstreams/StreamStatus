@@ -89,7 +89,7 @@ type StreamersRepo struct {
 	// event handled; reconciliation leaves them alone for a while after.
 	lastEvent map[string]time.Time
 
-	// live is the in-memory live state behind /api/status.json, backed by
+	// live is the in-memory live state behind /streamstatus/status.json, backed by
 	// the stream history database; nil turns it off.
 	live *liveState
 	// users maps roster logins to Twitch user IDs for live state.

@@ -74,7 +74,7 @@ type raidPartner struct {
 	RaidsIn     int    `json:"raids_in"`  // they raided this streamer
 }
 
-// streamerExtras are the extra fields of /api/stats/<id>.json (embedded,
+// streamerExtras are the extra fields of /streamstatus/stats/<id>.json (embedded,
 // so they appear at the top level).
 type streamerExtras struct {
 	FollowersPerStream30d *float64      `json:"followers_per_stream_30d,omitempty"`
@@ -320,7 +320,7 @@ func topClips(clips []mediaItem, from time.Time, n int) []mediaItem {
 	return out
 }
 
-// communityExtras are the extra fields of /api/stats.json.
+// communityExtras are the extra fields of /streamstatus/stats.json.
 type communityExtras struct {
 	Raids30d    int          `json:"raids_30d"`  // involving a roster streamer
 	Topics30d   []topicCount `json:"topics_30d"` // streams counts summed over streamers
@@ -357,7 +357,7 @@ func buildCommunityExtras(all []streamerStats, d *statsData, roster map[string]b
 	return x
 }
 
-// --- raid graph: /api/raids.json
+// --- raid graph: /streamstatus/raids.json
 
 type raidNode struct {
 	ID          string `json:"id"`
@@ -432,7 +432,7 @@ func (l *liveState) buildRaidGraph(d *statsData, now time.Time) raidGraph {
 	return g
 }
 
-// handleRaids serves /api/raids.json.
+// handleRaids serves /streamstatus/raids.json.
 func (s *StreamersRepo) handleRaids(w http.ResponseWriter, r *http.Request) {
 	var doc *apiDoc
 	if s.live != nil {

@@ -75,11 +75,10 @@ cd /home/ec2-user/hosting && cp -a docker-compose.yml docker-compose.yml.bak.$(d
    Check nothing else relies on port 8080 being public (Twitch reaches the bot
    through nginx) before switching to `127.0.0.1:8080:8080`; close 8080 in the
    security group too if it is open.
-4. **nginx.** In the `p.infosecstreams.com` TLS server block, replace the
-   `/webhook/callbacks` location with the contents of
-   [`nginx-streamstatus.conf`](nginx-streamstatus.conf) (adds `/api/`, and makes
-   nginx re-resolve `streamstatus` so a recreated container's new IP is picked
-   up without a reload). `docker-compose exec nginx nginx -t && docker-compose exec nginx nginx -s reload`.
+4. **Proxy.** The host now runs Caddy (see `deploy/edge/caddy/Caddyfile`). It
+   routes `/webhook/callbacks` and `/streamstatus/*` to the bot and everything
+   else to Plausible, which owns `/api/*` and `/live/*`. Never route `/api/` or
+   `/live/` to the bot: that breaks analytics.
 5. **Recreate once with the new compose file**, still on the old image:
    `docker-compose up -d --no-deps streamstatus`, then
    `./deploy-streamstatus status` (shows no pin yet). Images built before this
@@ -152,8 +151,8 @@ usage line and exit, as must `ssh … 'deploy sha256:abc; id'`.
   Or from GitHub: open the older release's workflow run and *Re-run* its
   `deploy` job, which redeploys that run's signed digest.
 - **Manual deploy of a specific signed digest:** `./deploy-streamstatus deploy sha256:<digest>`.
-- **Health URL:** once `/api/status.json` ships, set
-  `HEALTH_URL='http://127.0.0.1:8080/api/status.json'` in the script's
+- **Health URL:** once `/streamstatus/status.json` ships, set
+  `HEALTH_URL='http://127.0.0.1:8080/streamstatus/status.json'` in the script's
   configuration block so a deploy also requires an HTTP 200.
 - **Rotating the deploy key:** add the new `authorized_keys` line, update
   `DEPLOY_SSH_KEY`, remove the old line.

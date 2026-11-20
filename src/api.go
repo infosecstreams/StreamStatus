@@ -11,7 +11,7 @@ import (
 	"strings"
 )
 
-// The public JSON API (https://p.infosecstreams.com/api/). Documents are
+// The public JSON API (https://p.infosecstreams.com/streamstatus/). Documents are
 // built once, when their data changes, into an immutable apiDoc (body,
 // gzipped body, ETag), and handlers only serve the current one: a request
 // never waits for the worker.
@@ -175,13 +175,13 @@ func writeAPIError(w http.ResponseWriter, code int, msg string) {
 	w.Write(append(body, '\n'))
 }
 
-// registerAPI adds the /api/ routes to mux.
+// registerAPI adds the /streamstatus/ routes to mux.
 func (s *StreamersRepo) registerAPI(mux *http.ServeMux) {
-	mux.HandleFunc("/api/status.json", s.handleStatus)
-	mux.HandleFunc("/api/stats.json", s.handleStats)
-	mux.HandleFunc("/api/stats/", s.handleStreamerStats)
-	mux.HandleFunc("/api/raids.json", s.handleRaids)
-	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/streamstatus/status.json", s.handleStatus)
+	mux.HandleFunc("/streamstatus/stats.json", s.handleStats)
+	mux.HandleFunc("/streamstatus/stats/", s.handleStreamerStats)
+	mux.HandleFunc("/streamstatus/raids.json", s.handleRaids)
+	mux.HandleFunc("/streamstatus/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodOptions {
 			serveDoc(w, r, nil)
 			return
@@ -190,7 +190,7 @@ func (s *StreamersRepo) registerAPI(mux *http.ServeMux) {
 	})
 }
 
-// handleStatus serves GET /api/status.json.
+// handleStatus serves GET /streamstatus/status.json.
 func (s *StreamersRepo) handleStatus(w http.ResponseWriter, r *http.Request) {
 	var doc *apiDoc
 	if s.live != nil {

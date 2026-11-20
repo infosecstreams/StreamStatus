@@ -19,7 +19,7 @@ import (
 )
 
 // Twitch schedules ("Get Channel Stream Schedule") feed three things:
-// GET /api/schedule.json and /api/schedule.ics, next_stream_at in
+// GET /streamstatus/schedule.json and /streamstatus/schedule.ics, next_stream_at in
 // status.json (nextStreamAt), and a 🟡 pre-live marker for streamers whose
 // scheduled stream starts within schedulePreliveLead.
 //
@@ -573,11 +573,11 @@ func (s *StreamersRepo) checkSchedulePrelive() {
 }
 
 // scheduleHandlers returns the schedule endpoints by path, for mounting on
-// the /api/ mux.
+// the /streamstatus/ mux.
 func (s *StreamersRepo) scheduleHandlers() map[string]http.HandlerFunc {
 	return map[string]http.HandlerFunc{
-		"/api/schedule.json": s.serveScheduleJSON,
-		"/api/schedule.ics":  s.serveScheduleICS,
+		"/streamstatus/schedule.json": s.serveScheduleJSON,
+		"/streamstatus/schedule.ics":  s.serveScheduleICS,
 	}
 }
 

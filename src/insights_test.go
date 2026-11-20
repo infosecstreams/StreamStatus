@@ -86,7 +86,7 @@ func TestRaidStatsAndGraph(t *testing.T) {
 	s.registerAPI(mux)
 
 	var one streamerStats
-	json.Unmarshal(apiGet(mux, "GET", "/api/stats/alpha.json", nil).Body.Bytes(), &one)
+	json.Unmarshal(apiGet(mux, "GET", "/streamstatus/stats/alpha.json", nil).Body.Bytes(), &one)
 	if one.RaidsOut30d != 2 || one.RaidViewersOut30d != 30 || one.RaidsIn30d != 2 || one.RaidViewersIn30d != 8 {
 		t.Errorf("alpha raids: %+v", one.streamerExtras)
 	}
@@ -95,12 +95,12 @@ func TestRaidStatsAndGraph(t *testing.T) {
 	}
 
 	var comm communityStats
-	json.Unmarshal(apiGet(mux, "GET", "/api/stats.json", nil).Body.Bytes(), &comm)
+	json.Unmarshal(apiGet(mux, "GET", "/streamstatus/stats.json", nil).Body.Bytes(), &comm)
 	if comm.Raids30d != 4 {
 		t.Errorf("community raids = %d, want 4", comm.Raids30d)
 	}
 
-	rec := apiGet(mux, "GET", "/api/raids.json", nil)
+	rec := apiGet(mux, "GET", "/streamstatus/raids.json", nil)
 	if rec.Code != 200 || rec.Header().Get("Cache-Control") != "public, max-age=300" {
 		t.Fatalf("raids.json: %d", rec.Code)
 	}
@@ -269,7 +269,7 @@ func TestVODsAndClips(t *testing.T) {
 	s.registerAPI(mux)
 
 	var one streamerStats
-	json.Unmarshal(apiGet(mux, "GET", "/api/stats/1.json", nil).Body.Bytes(), &one)
+	json.Unmarshal(apiGet(mux, "GET", "/streamstatus/stats/1.json", nil).Body.Bytes(), &one)
 	if len(one.RecentVODs) != 2 || one.RecentVODs[0].ID != "v2" || one.RecentVODs[0].DurationS != 5400 {
 		t.Errorf("vods = %+v", one.RecentVODs)
 	}
@@ -282,7 +282,7 @@ func TestVODsAndClips(t *testing.T) {
 	}
 
 	var comm communityStats
-	json.Unmarshal(apiGet(mux, "GET", "/api/stats.json", nil).Body.Bytes(), &comm)
+	json.Unmarshal(apiGet(mux, "GET", "/streamstatus/stats.json", nil).Body.Bytes(), &comm)
 	clips = nil
 	for _, c := range comm.TopClips30d {
 		clips = append(clips, c.ID+"@"+c.StreamerLogin)

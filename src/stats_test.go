@@ -280,10 +280,10 @@ func TestStatsEndpoints(t *testing.T) {
 	mux := http.NewServeMux()
 	s.registerAPI(mux)
 
-	if rec := apiGet(mux, "GET", "/api/stats.json", nil); rec.Code != http.StatusServiceUnavailable {
+	if rec := apiGet(mux, "GET", "/streamstatus/stats.json", nil); rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("before first build: %d", rec.Code)
 	}
-	if rec := apiGet(mux, "GET", "/api/stats/1.json", nil); rec.Code != http.StatusServiceUnavailable {
+	if rec := apiGet(mux, "GET", "/streamstatus/stats/1.json", nil); rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("before first build: %d", rec.Code)
 	}
 
@@ -291,7 +291,7 @@ func TestStatsEndpoints(t *testing.T) {
 	s.resolveRoster([]string{"alpha", "beta"}, c.now)
 	s.process(statusJob{kind: jobStats})
 
-	rec := apiGet(mux, "GET", "/api/stats.json", nil)
+	rec := apiGet(mux, "GET", "/streamstatus/stats.json", nil)
 	if rec.Code != 200 || rec.Header().Get("Cache-Control") != "public, max-age=300" || rec.Header().Get("Access-Control-Allow-Origin") != "*" {
 		t.Fatalf("stats.json: %d %v", rec.Code, rec.Header())
 	}
@@ -310,8 +310,8 @@ func TestStatsEndpoints(t *testing.T) {
 		t.Errorf("community heatmap/categories: %v %+v", comm.LiveHeatmap90d[0][18], comm.Categories30d)
 	}
 
-	byID := apiGet(mux, "GET", "/api/stats/1.json", nil)
-	for _, path := range []string{"/api/stats/alpha.json", "/api/stats/ALPHA.json"} {
+	byID := apiGet(mux, "GET", "/streamstatus/stats/1.json", nil)
+	for _, path := range []string{"/streamstatus/stats/alpha.json", "/streamstatus/stats/ALPHA.json"} {
 		r := apiGet(mux, "GET", path, nil)
 		if r.Code != 200 || r.Body.String() != byID.Body.String() {
 			t.Errorf("%s: %d", path, r.Code)
@@ -322,12 +322,12 @@ func TestStatsEndpoints(t *testing.T) {
 	if one.ID != "1" || one.Login != "alpha" || one.DisplayName != "Alpha" || one.Hours.D30 != 3 {
 		t.Errorf("stats/1 = %+v", one)
 	}
-	for _, path := range []string{"/api/stats/nobody.json", "/api/stats/1", "/api/stats/a/b.json", "/api/stats/.json"} {
+	for _, path := range []string{"/streamstatus/stats/nobody.json", "/streamstatus/stats/1", "/streamstatus/stats/a/b.json", "/streamstatus/stats/.json"} {
 		if r := apiGet(mux, "GET", path, nil); r.Code != 404 {
 			t.Errorf("%s: %d, want 404", path, r.Code)
 		}
 	}
-	if r := apiGet(mux, "GET", "/api/stats/1.json", map[string]string{"If-None-Match": byID.Header().Get("ETag")}); r.Code != 304 {
+	if r := apiGet(mux, "GET", "/streamstatus/stats/1.json", map[string]string{"If-None-Match": byID.Header().Get("ETag")}); r.Code != 304 {
 		t.Errorf("conditional: %d", r.Code)
 	}
 }

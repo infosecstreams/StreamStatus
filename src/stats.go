@@ -16,8 +16,8 @@ import (
 // Statistics built from the recorded sessions, viewer samples, daily
 // follower totals and title changes:
 //
-//	GET /api/stats.json           community totals plus one summary row per streamer
-//	GET /api/stats/<id|login>.json one streamer's full statistics
+//	GET /streamstatus/stats.json           community totals plus one summary row per streamer
+//	GET /streamstatus/stats/<id|login>.json one streamer's full statistics
 //
 // Everything is recomputed on the worker every statsInterval into
 // immutable documents, like status.json. "Infosec" time is time in
@@ -458,7 +458,7 @@ type recentStream struct {
 // average fraction of that hour spent live per week (0..1).
 type heatmap [7][24]float64
 
-// streamerStats is /api/stats/<id>.json. Optional figures are omitted
+// streamerStats is /streamstatus/stats/<id>.json. Optional figures are omitted
 // until there is data for them.
 type streamerStats struct {
 	ID             string `json:"id"`
@@ -498,7 +498,7 @@ type streamerStats struct {
 	streamerExtras
 }
 
-// statsSummary is one streamer's row in /api/stats.json.
+// statsSummary is one streamer's row in /streamstatus/stats.json.
 type statsSummary struct {
 	ID                 string   `json:"id"`
 	Login              string   `json:"login"`
@@ -527,7 +527,7 @@ type communityTotals struct {
 	TrackedStreamers int     `json:"tracked_streamers"`
 }
 
-// communityStats is /api/stats.json.
+// communityStats is /streamstatus/stats.json.
 type communityStats struct {
 	GeneratedAt    string          `json:"generated_at"`
 	RecordingSince string          `json:"recording_since,omitempty"`
@@ -990,7 +990,7 @@ func (l *liveState) buildStats(now time.Time) {
 
 // --- HTTP
 
-// handleStats serves /api/stats.json.
+// handleStats serves /streamstatus/stats.json.
 func (s *StreamersRepo) handleStats(w http.ResponseWriter, r *http.Request) {
 	var doc *apiDoc
 	if s.live != nil {
@@ -1001,9 +1001,9 @@ func (s *StreamersRepo) handleStats(w http.ResponseWriter, r *http.Request) {
 	serveDoc(w, r, doc)
 }
 
-// handleStreamerStats serves /api/stats/<id or login>.json.
+// handleStreamerStats serves /streamstatus/stats/<id or login>.json.
 func (s *StreamersRepo) handleStreamerStats(w http.ResponseWriter, r *http.Request) {
-	key, ok := strings.CutSuffix(strings.TrimPrefix(r.URL.Path, "/api/stats/"), ".json")
+	key, ok := strings.CutSuffix(strings.TrimPrefix(r.URL.Path, "/streamstatus/stats/"), ".json")
 	if !ok || key == "" || strings.Contains(key, "/") {
 		writeAPIError(w, http.StatusNotFound, "not found")
 		return

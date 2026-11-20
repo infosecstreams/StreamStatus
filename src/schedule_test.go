@@ -357,12 +357,12 @@ func get(t *testing.T, s *StreamersRepo, path string, hdr map[string]string) *ht
 
 func TestScheduleJSON(t *testing.T) {
 	s, _ := newScheduleRepo(t)
-	if rec := get(t, s, "/api/schedule.json", nil); rec.Code != 503 || rec.Header().Get("Retry-After") == "" {
+	if rec := get(t, s, "/streamstatus/schedule.json", nil); rec.Code != 503 || rec.Header().Get("Retry-After") == "" {
 		t.Errorf("before the first refresh: %d, want 503 with Retry-After", rec.Code)
 	}
 	s.refreshSchedules(direct)
 
-	rec := get(t, s, "/api/schedule.json", nil)
+	rec := get(t, s, "/streamstatus/schedule.json", nil)
 	if rec.Code != 200 {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
 	}
@@ -401,11 +401,11 @@ func TestScheduleJSON(t *testing.T) {
 	}
 
 	// ETag round trip.
-	if rec2 := get(t, s, "/api/schedule.json", map[string]string{"If-None-Match": h.Get("ETag")}); rec2.Code != 304 || rec2.Body.Len() != 0 {
+	if rec2 := get(t, s, "/streamstatus/schedule.json", map[string]string{"If-None-Match": h.Get("ETag")}); rec2.Code != 304 || rec2.Body.Len() != 0 {
 		t.Errorf("If-None-Match: %d", rec2.Code)
 	}
 	// gzip.
-	rec3 := get(t, s, "/api/schedule.json", map[string]string{"Accept-Encoding": "br, gzip"})
+	rec3 := get(t, s, "/streamstatus/schedule.json", map[string]string{"Accept-Encoding": "br, gzip"})
 	if rec3.Header().Get("Content-Encoding") != "gzip" {
 		t.Fatalf("no gzip: %v", rec3.Header())
 	}
@@ -421,14 +421,14 @@ func TestScheduleJSON(t *testing.T) {
 	}
 
 	// ?login=
-	rec4 := get(t, s, "/api/schedule.json?login=DORMANT", nil)
+	rec4 := get(t, s, "/streamstatus/schedule.json?login=DORMANT", nil)
 	if !strings.Contains(rec4.Body.String(), `"segment_id":"d1"`) || strings.Contains(rec4.Body.String(), `"a1"`) {
 		t.Errorf("login filter: %s", rec4.Body)
 	}
-	if rec5 := get(t, s, "/api/schedule.json?login=beta", nil); rec5.Code != 200 || !strings.Contains(rec5.Body.String(), `"segments":[]`) {
+	if rec5 := get(t, s, "/streamstatus/schedule.json?login=beta", nil); rec5.Code != 200 || !strings.Contains(rec5.Body.String(), `"segments":[]`) {
 		t.Errorf("roster streamer without schedule: %d %s", rec5.Code, rec5.Body)
 	}
-	if rec6 := get(t, s, "/api/schedule.json?login=nobody", nil); rec6.Code != 404 {
+	if rec6 := get(t, s, "/streamstatus/schedule.json?login=nobody", nil); rec6.Code != 404 {
 		t.Errorf("unknown login: %d", rec6.Code)
 	}
 }
@@ -436,14 +436,14 @@ func TestScheduleJSON(t *testing.T) {
 func TestScheduleMethods(t *testing.T) {
 	s, _ := newScheduleRepo(t)
 	s.refreshSchedules(direct)
-	h := s.scheduleHandlers()["/api/schedule.ics"]
+	h := s.scheduleHandlers()["/streamstatus/schedule.ics"]
 	for _, c := range []struct {
 		method string
 		code   int
 		body   bool
 	}{{"HEAD", 200, false}, {"OPTIONS", 204, false}, {"POST", 405, true}} {
 		rec := httptest.NewRecorder()
-		h(rec, httptest.NewRequest(c.method, "/api/schedule.ics", nil))
+		h(rec, httptest.NewRequest(c.method, "/streamstatus/schedule.ics", nil))
 		if rec.Code != c.code || (rec.Body.Len() > 0) != c.body || rec.Header().Get("Access-Control-Allow-Origin") != "*" {
 			t.Errorf("%s: %d body=%d", c.method, rec.Code, rec.Body.Len())
 		}
@@ -484,7 +484,7 @@ func TestScheduleICS(t *testing.T) {
 	page.Data.Schedule.Segments[0].CanceledUntil = "2026-11-21T00:00:00Z"
 	s.refreshSchedules(direct)
 
-	rec := get(t, s, "/api/schedule.ics", nil)
+	rec := get(t, s, "/streamstatus/schedule.ics", nil)
 	if rec.Code != 200 || rec.Header().Get("Content-Type") != "text/calendar; charset=utf-8" || rec.Header().Get("Cache-Control") != "public, max-age=300" {
 		t.Fatalf("%d %v", rec.Code, rec.Header())
 	}
@@ -530,7 +530,7 @@ func TestScheduleICS(t *testing.T) {
 	}
 
 	// One streamer's calendar.
-	rec = get(t, s, "/api/schedule.ics?login=dormant", nil)
+	rec = get(t, s, "/streamstatus/schedule.ics?login=dormant", nil)
 	lines = unfoldICS(t, rec.Body.String())
 	if strings.Count(rec.Body.String(), "BEGIN:VEVENT") != 1 || !containsLine(lines, "X-WR-CALNAME:Dormant on Twitch (InfoSec Streams)") {
 		t.Errorf("login filter:\n%s", rec.Body)
@@ -749,8 +749,8 @@ func TestScheduleConcurrentRefreshAndReads(t *testing.T) {
 		}
 	}()
 	for i := 0; i < 50; i++ {
-		get(t, s, "/api/schedule.json", nil)
-		get(t, s, "/api/schedule.ics?login=alpha", nil)
+		get(t, s, "/streamstatus/schedule.json", nil)
+		get(t, s, "/streamstatus/schedule.ics?login=alpha", nil)
 		s.nextStreamAt("1")
 		s.enqueue(statusJob{kind: jobFunc, fn: s.checkSchedulePrelive})
 	}

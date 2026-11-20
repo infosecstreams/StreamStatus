@@ -213,14 +213,14 @@ func TestTrackRecordInAPI(t *testing.T) {
 	a.record("1", adherenceOutcome{SegmentID: "x", Start: schedNow.Add(-24 * time.Hour), Kept: true}, schedNow)
 	a.record("1", adherenceOutcome{SegmentID: "y", Start: schedNow.Add(-48 * time.Hour)}, schedNow)
 
-	body := get(t, s, "/api/schedule.json", nil).Body.String()
+	body := get(t, s, "/streamstatus/schedule.json", nil).Body.String()
 	if !strings.Contains(body, `"segment_id":"a1","start":"2026-11-19T22:00:00Z","end":"2026-11-20T00:00:00Z","title":"CTF night","category":"Just Chatting","canceled":false,"track_record":{"kept":1,"total":2}`) {
 		t.Errorf("alpha's track record missing:\n%s", body)
 	}
 	if strings.Count(body, "track_record") != 2 {
 		t.Errorf("only alpha's two segments should carry one:\n%s", body)
 	}
-	lines := unfoldICS(t, get(t, s, "/api/schedule.ics", nil).Body.String())
+	lines := unfoldICS(t, get(t, s, "/streamstatus/schedule.ics", nil).Body.String())
 	if ev := eventLines(lines, "UID:a1"); !containsLine(ev, `DESCRIPTION:Category: Just Chatting\nhttps://www.twitch.tv/alpha\nWent live for 1 of their last 2 scheduled streams`) {
 		t.Errorf("ICS description: %q", ev)
 	}
