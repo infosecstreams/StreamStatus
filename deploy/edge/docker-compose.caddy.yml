@@ -1,0 +1,49 @@
+# Caddy for /home/ec2-user/hosting/docker-compose.yml (docker-compose v1.29).
+# It replaces the `nginx` and `letsencrypt` services. Follow
+# deploy/edge/CUTOVER-caddy.md; don't paste this in without the runbook.
+#
+# Merge it like this:
+#   1. Add the `caddy` service and the two volumes below.
+#   2. Copy deploy/edge/caddy/Caddyfile to /home/ec2-user/hosting/caddy/Caddyfile.
+#   3. In `plausible` and `streamstatus`, change `depends_on: nginx` to
+#      `depends_on: caddy` (plausible: `caddy: {condition: service_started}`).
+#      Otherwise a plain `docker-compose up -d` starts nginx again, and it
+#      fights Caddy for ports 80 and 443.
+#   4. During the rollback window, give `nginx` and `letsencrypt`
+#      `profiles: ["legacy-nginx"]` so they only start when named. Delete
+#      both, and the `acme-challenge` volume, once Caddy has renewed a
+#      certificate on its own (or after 2 weeks).
+version: "3.7"
+
+services:
+  caddy:
+    # caddy:2.11.9-alpine. Stock build: HTTP/3, zstd and gzip, automatic HTTPS.
+    image: caddy:2.11.9-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3 (QUIC). The security group must allow UDP 443.
+    environment:
+      # ACME account contact. Optional; defaults to the security.txt address.
+      ACME_EMAIL: security.txt@infosecstreams.com
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # The certificates, the ACME account and OCSP/ARI state live here.
+      # Keep this volume: losing it means re-issuing on the next start
+      # (the Let's Encrypt rate limit is 5 identical certs a week).
+      - caddy-data:/data
+      - caddy-config:/config
+      # Option (a) only (site served from this box, caddy/site.caddy):
+      # - ./site:/srv/site:ro
+    # Measured at ~27 MiB RSS idle in the local test; nginx was ~10 MiB.
+    mem_limit: 128m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  caddy-data:
+  caddy-config:

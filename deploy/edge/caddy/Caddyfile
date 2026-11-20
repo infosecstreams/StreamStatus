@@ -1,0 +1,159 @@
+# Caddy for p.infosecstreams.com on the EC2 host. It replaces the nginx
+# and letsencrypt (certbot) containers. See deploy/edge/README.md and
+# deploy/edge/CUTOVER-caddy.md.
+#
+# What it serves:
+#   /webhook/callbacks           Twitch EventSub -> streamstatus:8080 (POST only)
+#   /streamstatus/*              StreamStatus public API -> streamstatus:8080
+#   everything else              Plausible CE -> plausible:8000 (including
+#                                Plausible's /api/* and its LiveView /live/websocket
+#                                and /live/longpoll)
+#
+# Upstreams are compose service names. Caddy resolves them on every new
+# connection, so a recreated container (new IP after a deploy) needs no
+# reload. This replaces nginx's `resolver 127.0.0.11` + variable proxy_pass.
+{
+	# Let's Encrypt only (no ZeroSSL fallback), so the CAA record can stay
+	# letsencrypt.org-only for this name. HTTP-01 only: before cutover the
+	# challenge reaches Caddy through nginx on :80 (CUTOVER-caddy.md, step 3),
+	# and :443 still belongs to nginx then, so TLS-ALPN would fail.
+	# Caddy's default key type is ECDSA P-256 (today: RSA 4096).
+	cert_issuer acme {
+		disable_tlsalpn_challenge
+	}
+	email {$ACME_EMAIL:security.txt@infosecstreams.com}
+
+	servers {
+		# HTTP/3 is on by default; listed for clarity. 0-RTT on QUIC is on by
+		# default too; Caddy adds `Early-Data: 1` to proxied requests that came
+		# in early data. Only Twitch (TCP) and Plausible event beacons POST
+		# here, and a replayed Plausible event costs one duplicate pageview.
+		protocols h1 h2 h3
+		timeouts {
+			read_header 10s
+			read_body 30s
+			idle 5m
+		}
+	}
+}
+
+# Headers on every response unless the upstream already set them (`?`).
+(security_headers) {
+	header {
+		Strict-Transport-Security "max-age=63072000"
+		?X-Content-Type-Options "nosniff"
+		?Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+}
+
+# Port of nginx/config/blocklist.conf (the `$block_ua`/`$block_path` maps).
+# nginx answered with 444 (close without a response); `abort` does the same.
+# Applied to the Plausible route only, as before; the webhook and the
+# public API are not filtered.
+(blocklist) {
+	@blocked_ua header_regexp User-Agent `(?i)(CensysInspect|Expanse|leakix|Keydrop|onlyscans|Palo Alto Networks|visionheight|zgrab|GenomeCrawlerd|FlowIQLabsBot|forestengine\.net|InternetMeasurement|getdomaindata|ArgusScanner|ModatScanner|osentix|net-research-scan|YisouSpider|SiteLockSpider|bingbot|Amazonbot|AhrefsBot|OAI-SearchBot|GPTBot|ClaudeBot|Bytespider|PetalBot|SemrushBot|DotBot|MJ12bot|AgentReadinessScanner)`
+	@blocked_ua_cs header_regexp User-Agent `(iPhone OS 13_2_3|MSIE [6-9]\.|Trident/[4-6]\.|Chrome/4[0-9]\.0\.)`
+	@null_ua expression `{http.request.header.User-Agent} == ""`
+	@blocked_path path_regexp (?i)(^/(wp-|wordpress|xmlrpc\.php)|wp-includes|wp-content|wp-admin|^/\.env|^/\.git|^/cgi-bin/|setDebugCfg|^/(vpn|manage/account|admin/index\.html)|actuator|/CFIDE/|geoserver|LoginForm\.jsp|/console/login|\.jsp$|\.php$)
+	abort @blocked_ua
+	abort @blocked_ua_cs
+	abort @null_ua
+	abort @blocked_path
+}
+
+p.infosecstreams.com {
+	import security_headers
+
+	# gzip preferred, zstd for clients that only take zstd. Measured on our
+	# payloads, on-the-fly zstd (level 3) is no smaller than gzip -6 for small
+	# files (Plausible script.js: 1324 B gzip vs 1364 B zstd). Responses that
+	# already carry Content-Encoding (the bot's own gzip) pass through
+	# untouched. When Caddy encodes, it makes strong ETags encoding-specific
+	# ("abc" -> "abc-gzip") and strips that suffix from If-None-Match before
+	# proxying, so upstream 304s still work.
+	encode gzip zstd
+
+	log {
+		output stdout
+		format json
+	}
+	@uptime header_regexp User-Agent ^Uptime-Kuma/
+	log_skip @uptime
+
+	# security.txt, as in nginx/config/security_txt.
+	@securitytxt path /security.txt /.well-known/security.txt
+	handle @securitytxt {
+		header Content-Type "text/plain; charset=utf-8"
+		header Cache-Control "no-cache"
+		respond <<TXT
+			Contact: mailto:security.txt@infosecstreams.com
+			Expires: 2038-09-24T18:45:05Z
+			Encryption: Ask for Pubkey if needed.
+			TXT 200
+	}
+
+	# Twitch EventSub. POST only, small bodies, short timeouts.
+	@webhook path /webhook/callbacks
+	handle @webhook {
+		@not_post not method POST
+		respond @not_post 405
+		request_body {
+			max_size 64KB
+		}
+		reverse_proxy streamstatus:8080 {
+			transport http {
+				dial_timeout 5s
+				response_header_timeout 15s
+			}
+		}
+	}
+
+	# StreamStatus public API (CONTRACT.md: base /streamstatus/): status.json,
+	# schedule.json, schedule.ics, stats.json, stats/<id|login>.json. The path is
+	# passed through unchanged. Plausible owns /api/* (POST /api/event on every
+	# pageview, /api/stats/<domain>/..., /api/v1|v2) and /live/* (LiveView), so
+	# neither prefix may ever be routed to the bot.
+	@bot_api path /streamstatus/*
+	handle @bot_api {
+		@not_read not method GET HEAD
+		respond @not_read 405
+
+		reverse_proxy streamstatus:8080 {
+			# The bot sets Content-Type, CORS, a strong ETag, Vary and
+			# Cache-Control (max-age=15; schedule and stats 300) and gzips
+			# from a per-snapshot cache. Accept-Encoding passes through, so
+			# gzip-capable clients get the bot's gzip and Caddy only encodes
+			# (zstd) for clients that do not take gzip. Brotli/zstd for
+			# everyone is best done in the bot, precompressed once per
+			# snapshot (see README "API compression").
+			#
+			# Add stale-while-revalidate equal to max-age and a 5-minute
+			# stale-if-error, keeping the bot's own max-age per endpoint.
+			header_down Cache-Control "^public, max-age=(\d+)$" "public, max-age=$1, stale-while-revalidate=$1, stale-if-error=300"
+			header_down Cross-Origin-Resource-Policy "cross-origin"
+			transport http {
+				dial_timeout 5s
+				response_header_timeout 10s
+			}
+		}
+	}
+
+	# Plausible CE: dashboard, tracker script, /api/event, the live websocket
+	# (/live/websocket; Caddy proxies upgrades without extra config).
+	handle {
+		import blocklist
+		reverse_proxy plausible:8000 {
+			transport http {
+				dial_timeout 5s
+			}
+		}
+	}
+}
+
+# Anything else on :443 (bare IP, other SNI): Caddy has no certificate for it
+# and fails the handshake, like nginx's `ssl_reject_handshake on`. Plain HTTP
+# requests for unknown hosts are closed, like nginx's `return 444`.
+http:// {
+	abort
+}

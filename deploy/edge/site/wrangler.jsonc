@@ -1,0 +1,23 @@
+// Cloudflare Workers static-assets config for the Astro site.
+// Copy to site/wrangler.jsonc in infosecstreams.github.io. Assets only: no
+// Worker script runs, and static asset requests are free and unlimited on the
+// Workers Free plan.
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "infosecstreams-site",
+  "compatibility_date": "2026-11-01",
+  "assets": {
+    "directory": "./dist",
+    // /faq serves faq.html and /de/ serves de/index.html, the URLs the site
+    // links to (Astro build.format 'preserve' + trailingSlash 'ignore').
+    // /faq.html answers with a redirect to /faq.
+    "html_handling": "auto-trailing-slash",
+    // Serves dist/404.html with status 404 when the site has one.
+    "not_found_handling": "404-page"
+  },
+  // No "routes": the apex custom domain (cloudflare_workers_custom_domain)
+  // and the www redirect are owned by Terraform (terraform-iss/edge),
+  // so wrangler only uploads content and the two tools never fight.
+  "workers_dev": false,
+  "preview_urls": false
+}

@@ -1,0 +1,23 @@
+# Fake upstreams for run.sh: "streamstatus" (:8080) and "plausible" (:8000).
+{
+	auto_https off
+	admin off
+}
+:8080 {
+	handle /webhook/callbacks {
+		respond "bot webhook {method}" 200
+	}
+	@api path /streamstatus/*
+	handle @api {
+		root * /srv/bot
+		header Cache-Control "public, max-age=15"
+		header Access-Control-Allow-Origin "*"
+		# Like the bot: gzip only if accepted, otherwise identity, strong ETags.
+		file_server {
+			precompressed gzip
+		}
+	}
+}
+:8000 {
+	respond "plausible {method} {path}" 200
+}

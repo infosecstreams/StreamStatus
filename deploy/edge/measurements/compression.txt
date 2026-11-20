@@ -1,0 +1,9 @@
+# Compressed sizes in bytes (local gzip/zstd/brotli CLIs), 2026-11-19.
+# mock-status.json = site-astro's mock (349 streamers); synth-status.json = 700 streamers, ~2.5% live.
+# site-index.html = today's Jekyll home page.
+mock-status.json  identity=31531 gzip6=6239  gzip9=6182  zstd3=6139  zstd19=5511  br5=5739  br11=4957
+synth-status.json identity=77542 gzip6=15115 gzip9=15103 zstd3=13831 zstd19=12319 br5=12998 br11=10925
+site-index.html   identity=31882 gzip6=6367  gzip9=6353  zstd3=6806  zstd19=6158  br5=5857  br11=5078
+p./js/script.js                 identity=3005  gzip6=1324 zstd3=1364
+p./js/plausible.outbound-links  identity=3493  gzip6=1538 zstd3=1582
+p./ (dashboard login HTML)      identity=15695 gzip6=3131 zstd3=3339

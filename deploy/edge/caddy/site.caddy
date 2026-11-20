@@ -1,0 +1,59 @@
+# OPTION (a) ONLY — serve the Astro site from this box instead of a CDN.
+# Not imported by default. To use it: add `import site.caddy` at the end of
+# the Caddyfile, mount the release directory (docker-compose.caddy.yml has a
+# commented volume), point the apex and www A records at the Elastic IP.
+# The recommended setup is a CDN-native host instead (README, "Site hosting").
+#
+# Files: /srv/site/current -> releases/<sha>/ (atomic symlink swap by
+# deploy-site.sh). Each .html/.css/.js/.svg/.json/.xml/.txt file has .br and
+# .zst siblings made at build time (precompress.sh), so Caddy serves brotli
+# q11 / zstd 19 with no CPU per request.
+
+infosecstreams.com {
+	import security_headers
+
+	root * /srv/site/current
+	# /faq -> faq.html, /de/ -> de/index.html (Astro build.format 'preserve').
+	try_files {path} {path}.html {path}/index.html
+	file_server {
+		precompressed br zstd gzip
+	}
+	# Anything not precompressed (tiny files) still gets compressed.
+	encode gzip zstd
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		Cross-Origin-Opener-Policy "same-origin"
+		Permissions-Policy "browsing-topics=(), interest-cohort=(), camera=(), microphone=(), geolocation=()"
+	}
+	# Cache policy. The matchers don't overlap, so header order doesn't matter.
+	@hashed path /_astro/*
+	header @hashed Cache-Control "public, max-age=31536000, immutable"
+	@sw path /sw.js
+	header @sw {
+		Cache-Control "no-cache"
+		Content-Security-Policy "default-src 'self'; connect-src 'self'; script-src 'self'"
+	}
+	@static path /favicon.* /og.png
+	header @static Cache-Control "public, max-age=86400, stale-while-revalidate=604800"
+	# Everything else (HTML, sitemap, robots): revalidate every time (ETag,
+	# 304). The service worker serves its cached copy first anyway.
+	@other not path /_astro/* /sw.js /favicon.* /og.png
+	header @other {
+		Cache-Control "public, max-age=0, must-revalidate"
+		Content-Security-Policy "frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'none'"
+	}
+	# Open the connection to the API host early. Caddy has no 103 Early Hints
+	# directive, so this goes in the final response headers only.
+	@html path / /faq /inactive /resources /*/ /*/faq /*/inactive /*/resources
+	header @html Link "<https://p.infosecstreams.com>; rel=preconnect; crossorigin"
+
+	handle_errors 404 {
+		rewrite * /404.html
+		file_server
+	}
+}
+
+www.infosecstreams.com {
+	redir https://infosecstreams.com{uri} permanent
+}
