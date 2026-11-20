@@ -144,6 +144,13 @@ usage line and exit, as must `ssh … 'deploy sha256:abc; id'`.
 
 ## Day-2
 
+Run the script by hand **on the host** as
+`env -u SSH_CONNECTION ./deploy-streamstatus status` (or `rollback`). Inside
+any SSH session without the forced command it refuses with the usage line,
+because it can't tell an admin shell from someone trying to get a shell
+with the deploy key.
+
+
 - **Status:** `./deploy-streamstatus status` (pin, running image, last deploys).
   The full log is `/home/ec2-user/hosting/.deploy-streamstatus/deploy.log`.
 - **Roll back:** automatic on a failed deploy. By hand, on the host:

@@ -42,6 +42,7 @@ COMPOSE=docker-compose
 READY_TIMEOUT=120   # seconds to wait for READY_PATTERN
 STABLE_SECONDS=30   # then the container must stay up this long, no restarts
 HEALTH_URL=''       # optional: also require HTTP 200 here, e.g. http://127.0.0.1:8080/streamstatus/status.json
+HEALTH_TIMEOUT=90   # seconds to keep retrying HEALTH_URL (status.json is 503 until the first reconcile)
 if [[ -z "${SSH_CONNECTION:-}" ]]; then
   HOSTING_DIR=${DEPLOY_HOSTING_DIR:-$HOSTING_DIR}
   COSIGN=${DEPLOY_COSIGN:-$COSIGN}
@@ -49,6 +50,7 @@ if [[ -z "${SSH_CONNECTION:-}" ]]; then
   READY_TIMEOUT=${DEPLOY_READY_TIMEOUT:-$READY_TIMEOUT}
   STABLE_SECONDS=${DEPLOY_STABLE_SECONDS:-$STABLE_SECONDS}
   HEALTH_URL=${DEPLOY_HEALTH_URL:-$HEALTH_URL}
+  HEALTH_TIMEOUT=${DEPLOY_HEALTH_TIMEOUT:-$HEALTH_TIMEOUT}
 fi
 ENV_FILE=$HOSTING_DIR/.env
 STATE_DIR=$HOSTING_DIR/.deploy-streamstatus
@@ -160,10 +162,16 @@ wait_healthy() {
     return 1
   fi
   if [[ -n "$HEALTH_URL" ]]; then
-    if ! curl -fsS -o /dev/null --max-time 10 "$HEALTH_URL"; then
-      log "health check $HEALTH_URL failed"
-      return 1
-    fi
+    # The bot answers 503 until its first reconcile has built a snapshot
+    # (~30 s after start), so retry instead of judging the first answer.
+    local deadline=$((SECONDS + HEALTH_TIMEOUT))
+    until curl -fsS -o /dev/null --max-time 10 "$HEALTH_URL" 2>/dev/null; do
+      if (( SECONDS >= deadline )); then
+        log "health check $HEALTH_URL failed for ${HEALTH_TIMEOUT}s"
+        return 1
+      fi
+      sleep 3
+    done
     log "health check $HEALTH_URL OK"
   fi
   return 0

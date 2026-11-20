@@ -52,6 +52,29 @@ check "deploy writes history" grep -q "deploy $REPO@$D2" "$T/hosting/.deploy-str
 run deploy "$D2" && rc=0 || rc=$?
 check "redeploy of same digest is a no-op" grep -q "nothing to do" "$T/out"
 
+# --- the health check retries until the bot is ready -----------------------
+setup; running "$REPO@$D1"
+cat > "$T/bin/curl" <<'FAKE'
+#!/usr/bin/env bash
+# Fails twice (bot still building its first snapshot), then succeeds.
+n=$(cat "$FAKE/curl-calls" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > "$FAKE/curl-calls"
+[ "$n" -ge 3 ]
+FAKE
+chmod +x "$T/bin/curl"
+export DEPLOY_HEALTH_URL=http://127.0.0.1:8080/streamstatus/status.json DEPLOY_HEALTH_TIMEOUT=20
+run deploy "$D2" && rc=0 || rc=$?
+check "health check retries until 200" test "$rc" = 0
+check "health check was retried" test "$(cat "$FAKE/curl-calls")" -ge 3
+check "deploy after slow health pins digest" test "$(pin)" = "$REPO@$D2"
+
+setup; running "$REPO@$D1"
+printf '#!/usr/bin/env bash\nexit 22\n' > "$T/bin/curl"; chmod +x "$T/bin/curl"
+export DEPLOY_HEALTH_URL=http://127.0.0.1:8080/streamstatus/status.json DEPLOY_HEALTH_TIMEOUT=4
+run deploy "$D2" && rc=0 || rc=$?
+check "health check that never passes fails the deploy" test "$rc" != 0
+check "failed health check rolls back the pin" test "$(pin)" = "$REPO@$D1"
+unset DEPLOY_HEALTH_URL DEPLOY_HEALTH_TIMEOUT
+
 # --- an unsigned image changes nothing -------------------------------------
 setup; running "$REPO@$D1"; echo "$REPO@$D2" > "$FAKE/unsigned"
 before=$(cat "$FAKE/container")
