@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Fake cosign for run.sh: "verify <ref> ..." fails for refs listed in $FAKE/unsigned.
+set -euo pipefail
+[[ $1 == verify ]] || exit 1
+if grep -qxF "$2" "$FAKE/unsigned" 2>/dev/null; then echo "no matching signatures" >&2; exit 1; fi
+echo '[{"critical":{}}]'

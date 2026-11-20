@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Fake docker-compose for run.sh: "ps -q" and "up -d --no-deps streamstatus".
+set -euo pipefail
+case $1 in
+ps) [[ -f "$FAKE/container" ]] && cat "$FAKE/container"; exit 0 ;;
+up)
+  ref=$(sed -n 's/^STREAMSTATUS_IMAGE=//p' .env | tail -n 1)
+  n=$(($(cat "$FAKE/n" 2>/dev/null || echo 0) + 1))
+  echo "$n" > "$FAKE/n"
+  echo "c$n" > "$FAKE/container"
+  echo "$ref" > "$FAKE/running_ref"
+  logs='level=info msg="started streamstatus v9"'
+  grep -qxF "$ref" "$FAKE/never_ready" 2>/dev/null || logs+=$'\nlevel=info msg="server starting on :8080"'
+  echo "$logs" > "$FAKE/logs"
+  if grep -qxF "$ref" "$FAKE/crashloop" 2>/dev/null; then echo 3; else echo 0; fi > "$FAKE/restarts"
+  ;;
+*) echo "fake compose: unsupported: $*" >&2; exit 1 ;;
+esac

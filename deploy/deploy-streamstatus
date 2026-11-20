@@ -1,0 +1,263 @@
+#!/usr/bin/env bash
+# deploy-streamstatus: deploy one signed StreamStatus image by digest.
+#
+# Installed on the host as /home/ec2-user/hosting/deploy-streamstatus and
+# used as the forced command of the CI deploy key:
+#
+#   restrict,command="/home/ec2-user/hosting/deploy-streamstatus" ssh-ed25519 AAAA... streamstatus-deploy
+#
+# Over SSH it reads ONLY $SSH_ORIGINAL_COMMAND, which must be exactly one of
+#   deploy sha256:<64 hex>    verify, pin and roll out that digest
+#   verify sha256:<64 hex>    verify and pull only, change nothing
+#   sha256:<64 hex>           same as deploy
+# Anything else is rejected. Run by hand on the host it also accepts
+#   rollback                  go back to the image that ran before the last deploy
+#   status                    show what is pinned and running
+#
+# A deploy:
+#   1. verifies the image's keyless cosign signature: it must have been
+#      signed by this repo's build-and-push.yml running on a v* tag;
+#   2. pulls ghcr.io/infosecstreams/streamstatus@sha256:<digest>;
+#   3. tags the running image as streamstatus-rollback:previous;
+#   4. pins STREAMSTATUS_IMAGE=<repo>@sha256:<digest> in the compose .env;
+#   5. recreates only the streamstatus service (--no-deps);
+#   6. waits for the "server starting on" log line and for the container to
+#      stay up without restarting; if either fails it rolls back and exits 1.
+set -euo pipefail
+umask 022
+
+# --- configuration ---------------------------------------------------------
+# Fixed when run over SSH; overridable from the environment only when run by
+# hand on the host (or in tests), never by the SSH client.
+IMAGE_REPO=ghcr.io/infosecstreams/streamstatus
+SERVICE=streamstatus
+IMAGE_VAR=STREAMSTATUS_IMAGE
+ROLLBACK_TAG=streamstatus-rollback:previous
+CERT_ISSUER=https://token.actions.githubusercontent.com
+CERT_IDENTITY_REGEXP='^https://github\.com/infosecstreams/StreamStatus/\.github/workflows/build-and-push\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'
+READY_PATTERN='server starting on'
+HOSTING_DIR=/home/ec2-user/hosting
+COSIGN=/usr/local/bin/cosign
+COMPOSE=docker-compose
+READY_TIMEOUT=120   # seconds to wait for READY_PATTERN
+STABLE_SECONDS=30   # then the container must stay up this long, no restarts
+HEALTH_URL=''       # optional: also require HTTP 200 here, e.g. http://127.0.0.1:8080/api/status.json
+if [[ -z "${SSH_CONNECTION:-}" ]]; then
+  HOSTING_DIR=${DEPLOY_HOSTING_DIR:-$HOSTING_DIR}
+  COSIGN=${DEPLOY_COSIGN:-$COSIGN}
+  COMPOSE=${DEPLOY_COMPOSE:-$COMPOSE}
+  READY_TIMEOUT=${DEPLOY_READY_TIMEOUT:-$READY_TIMEOUT}
+  STABLE_SECONDS=${DEPLOY_STABLE_SECONDS:-$STABLE_SECONDS}
+  HEALTH_URL=${DEPLOY_HEALTH_URL:-$HEALTH_URL}
+fi
+ENV_FILE=$HOSTING_DIR/.env
+STATE_DIR=$HOSTING_DIR/.deploy-streamstatus
+LOG_FILE=$STATE_DIR/deploy.log
+# ---------------------------------------------------------------------------
+
+die() { echo "deploy-streamstatus: error: $*" >&2; exit 1; }
+log() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $*"; }
+
+usage() {
+  echo "usage: deploy-streamstatus {deploy|verify} sha256:<digest> | sha256:<digest> | rollback | status" >&2
+  exit 2
+}
+
+# --- parse the request -----------------------------------------------------
+if [[ -n "${SSH_ORIGINAL_COMMAND+set}" ]]; then
+  request=$SSH_ORIGINAL_COMMAND
+  remote=true
+elif [[ -n "${SSH_CONNECTION:-}" ]]; then
+  usage # a forced-command login with no command (interactive shell attempt)
+else
+  request="$*"
+  remote=false
+fi
+
+digest_re='^sha256:[0-9a-f]{64}$'
+mode='' digest=''
+if [[ "$request" =~ ^(deploy|verify)\ (sha256:[0-9a-f]{64})$ ]]; then
+  mode=${BASH_REMATCH[1]} digest=${BASH_REMATCH[2]}
+elif [[ "$request" =~ $digest_re ]]; then
+  mode=deploy digest=$request
+elif [[ "$remote" == false && ( "$request" == rollback || "$request" == status ) ]]; then
+  mode=$request
+else
+  usage
+fi
+
+cd "$HOSTING_DIR" || die "no $HOSTING_DIR"
+mkdir -p "$STATE_DIR"
+
+# One deploy at a time; a second one waits up to 10 minutes.
+exec 9>"$STATE_DIR/lock"
+flock -w 600 9 || die "another deploy is still running"
+
+# Everything below is also appended to the deploy log.
+exec > >(tee -a "$LOG_FILE") 2>&1
+log "request: $mode ${digest:-} (remote: $remote, from: ${SSH_CONNECTION:-local})"
+
+# --- helpers ---------------------------------------------------------------
+compose() { $COMPOSE "$@"; }
+
+# current_pin prints the STREAMSTATUS_IMAGE value from .env, if any.
+current_pin() {
+  [[ -f "$ENV_FILE" ]] || return 0
+  sed -n "s/^${IMAGE_VAR}=//p" "$ENV_FILE" | tail -n 1
+}
+
+# set_pin rewrites only the STREAMSTATUS_IMAGE line of .env, atomically,
+# keeping every other line and the file's permissions.
+set_pin() {
+  local value=$1 tmp
+  tmp=$(mktemp "$ENV_FILE.XXXXXX")
+  if [[ -f "$ENV_FILE" ]]; then
+    grep -v "^${IMAGE_VAR}=" "$ENV_FILE" > "$tmp" || true
+    chmod --reference="$ENV_FILE" "$tmp"
+  fi
+  echo "${IMAGE_VAR}=${value}" >> "$tmp"
+  mv -f "$tmp" "$ENV_FILE"
+  log "pinned ${IMAGE_VAR}=${value}"
+}
+
+container_id() { compose ps -q "$SERVICE" 2>/dev/null | head -n 1; }
+
+verify_signature() {
+  local ref=$1
+  log "verifying signature of $ref"
+  "$COSIGN" verify "$ref" \
+    --certificate-oidc-issuer "$CERT_ISSUER" \
+    --certificate-identity-regexp "$CERT_IDENTITY_REGEXP" \
+    > /dev/null || die "signature verification FAILED for $ref; nothing changed"
+  log "signature OK (signed by build-and-push.yml on a v* tag)"
+}
+
+# wait_healthy succeeds once the new container logged READY_PATTERN and then
+# stayed running for STABLE_SECONDS without a restart.
+wait_healthy() {
+  local cid started deadline state
+  cid=$(container_id)
+  [[ -n "$cid" ]] || { log "no $SERVICE container after up"; return 1; }
+  started=$(docker inspect -f '{{.State.StartedAt}}' "$cid")
+  deadline=$((SECONDS + READY_TIMEOUT))
+  log "waiting up to ${READY_TIMEOUT}s for '$READY_PATTERN' from ${cid:0:12}"
+  # grep without -q reads all input, so docker logs never dies of SIGPIPE
+  # (which pipefail would report as a failure).
+  until docker logs --since "$started" "$cid" 2>&1 | grep -F -- "$READY_PATTERN" > /dev/null; do
+    if ((SECONDS >= deadline)); then
+      log "timed out waiting for '$READY_PATTERN'; last log lines:"
+      docker logs --tail 20 "$cid" 2>&1 | sed 's/^/    /'
+      return 1
+    fi
+    sleep 2
+  done
+  log "ready line seen; checking it stays up for ${STABLE_SECONDS}s"
+  sleep "$STABLE_SECONDS"
+  state=$(docker inspect -f '{{.State.Running}} {{.RestartCount}}' "$cid" 2>/dev/null || echo "gone")
+  if [[ "$state" != "true 0" || "$(container_id)" != "$cid" ]]; then
+    log "container did not stay up (running/restarts: $state); last log lines:"
+    docker logs --tail 20 "$cid" 2>&1 | sed 's/^/    /'
+    return 1
+  fi
+  if [[ -n "$HEALTH_URL" ]]; then
+    if ! curl -fsS -o /dev/null --max-time 10 "$HEALTH_URL"; then
+      log "health check $HEALTH_URL failed"
+      return 1
+    fi
+    log "health check $HEALTH_URL OK"
+  fi
+  return 0
+}
+
+roll_out() {
+  local ref=$1
+  set_pin "$ref"
+  log "recreating $SERVICE with $ref"
+  compose up -d --no-deps "$SERVICE"
+}
+
+# rollback_to restores the previous pin (or the image that was running) and
+# waits for it. It is best effort: the caller still reports the failure.
+rollback_to() {
+  local prev_pin=$1 have_prev_image=$2 target
+  if [[ "$prev_pin" =~ ^${IMAGE_REPO}@sha256:[0-9a-f]{64}$ ]]; then
+    target=$prev_pin
+  elif [[ "$have_prev_image" == true ]]; then
+    target=$ROLLBACK_TAG
+  else
+    log "ROLLBACK impossible: nothing ran before this deploy"
+    return 1
+  fi
+  log "ROLLING BACK to $target"
+  roll_out "$target"
+  if wait_healthy; then
+    log "rollback to $target is healthy"
+  else
+    log "ROLLBACK ALSO UNHEALTHY: $SERVICE needs a human"
+    return 1
+  fi
+}
+
+# --- modes -----------------------------------------------------------------
+case $mode in
+status)
+  log "pinned: $(current_pin || true)"
+  cid=$(container_id)
+  if [[ -n "$cid" ]]; then
+    docker inspect -f 'running: {{.Config.Image}} ({{.Image}}) up since {{.State.StartedAt}}, restarts {{.RestartCount}}' "$cid"
+  else
+    log "no $SERVICE container"
+  fi
+  [[ -f "$STATE_DIR/history" ]] && tail -n 5 "$STATE_DIR/history"
+  exit 0
+  ;;
+rollback)
+  prev=$(tail -n 1 "$STATE_DIR/previous" 2>/dev/null || true)
+  [[ -n "$prev" ]] || die "no recorded previous deploy"
+  docker image inspect "$ROLLBACK_TAG" > /dev/null 2>&1 && have=true || have=false
+  rollback_to "$prev" "$have" || exit 1
+  echo "$(date -u +%FT%TZ) rollback $(current_pin)" >> "$STATE_DIR/history"
+  exit 0
+  ;;
+esac
+
+ref="${IMAGE_REPO}@${digest}"
+verify_signature "$ref"
+log "pulling $ref"
+docker pull -q "$ref" > /dev/null
+new_image_id=$(docker image inspect -f '{{.Id}}' "$ref")
+
+if [[ "$mode" == verify ]]; then
+  log "verify only: $ref is signed and pulled (image $new_image_id); nothing changed"
+  exit 0
+fi
+
+prev_pin=$(current_pin || true)
+cid=$(container_id)
+have_prev_image=false
+if [[ -n "$cid" ]]; then
+  running_image_id=$(docker inspect -f '{{.Image}}' "$cid")
+  if [[ "$running_image_id" == "$new_image_id" && "$prev_pin" == "$ref" ]]; then
+    log "$ref is already pinned and running; nothing to do"
+    exit 0
+  fi
+  docker tag "$running_image_id" "$ROLLBACK_TAG"
+  have_prev_image=true
+  log "previous: pin '${prev_pin:-<unset>}', image $running_image_id (tagged $ROLLBACK_TAG)"
+else
+  log "no running $SERVICE container; first deploy has nothing to roll back to"
+fi
+# What a later manual "rollback" should restore.
+printf '%s\n' "${prev_pin:-$ROLLBACK_TAG}" > "$STATE_DIR/previous"
+
+roll_out "$ref"
+if wait_healthy; then
+  echo "$(date -u +%FT%TZ) deploy $ref" >> "$STATE_DIR/history"
+  log "DEPLOYED $ref"
+  exit 0
+fi
+
+log "DEPLOY FAILED for $ref"
+rollback_to "$prev_pin" "$have_prev_image" || true
+echo "$(date -u +%FT%TZ) failed $ref (rolled back to $(current_pin))" >> "$STATE_DIR/history"
+exit 1

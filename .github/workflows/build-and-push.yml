@@ -1,55 +1,191 @@
-name: Build and Push Docker Image
+name: Build, sign and deploy
+
+# A v* tag push tests, builds, pushes, signs and attests the image, then
+# deploys that exact digest to production. Only final release tags
+# (vX.Y.Z) move :latest and deploy; pre-release tags (v1.4.0-rc.1) are
+# built and signed but not deployed. workflow_dispatch from a branch builds
+# a signed :sha-<commit> image for testing and never deploys.
 
 on:
   push:
     tags:
-      - 'v*'  # This will trigger the workflow on tags that start with 'v'
+      - 'v*'
   workflow_dispatch:
+    inputs:
+      deploy_mode:
+        description: 'On a tag ref: deploy, verify (host pulls and checks the signature, changes nothing) or none. Ignored on branches, which never deploy.'
+        type: choice
+        options: [deploy, verify, none]
+        default: deploy
 
-permissions:
-  contents: read
-  packages: write
+permissions: {}
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
+  test:
+    uses: ./.github/workflows/test.yml
+    permissions:
+      contents: read
 
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write      # push to ghcr.io
+      id-token: write      # keyless cosign signature + attestation (GitHub OIDC)
+      attestations: write  # build provenance attestation
+    outputs:
+      image: ${{ steps.vars.outputs.image }}
+      digest: ${{ steps.digest.outputs.digest }}
+      release: ${{ steps.vars.outputs.release }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Full history so git describe / rev-list can see all tags.
           fetch-depth: 0
-          fetch-tags: true
+          persist-credentials: false
 
-      - name: Log in to GitHub Docker registry
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-
-      - name: Get the latest tag
-        id: get_tag
-        run: echo "LATEST_TAG=$(git describe --tags `git rev-list --tags --max-count=1`)" >> $GITHUB_ENV
-
-      - name: Set up tags
+      - name: Compute image name, tags and version
         id: vars
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
         run: |
-          # github.repository is already "owner/name"; do not prepend the
-          # owner again or the image lands in a wrongly nested package.
-          REPO_NAME_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
-          SHORT_SHA=$(git rev-parse --short HEAD)
-          VERSION="${{ env.LATEST_TAG }}"
-          TAG1="ghcr.io/${REPO_NAME_LOWER}:latest"
-          TAG2="ghcr.io/${REPO_NAME_LOWER}:${VERSION}-0-${SHORT_SHA}"
+          set -euo pipefail
+          image="ghcr.io/${REPOSITORY,,}"
+          short=$(git rev-parse --short=12 HEAD)
+          release=false
+          if [[ "$REF_TYPE" == tag ]]; then
+            # The tag that triggered this run, not whichever tag is newest.
+            if [[ ! "$REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+              echo "::error::tag $REF_NAME is not vX.Y.Z or vX.Y.Z-prerelease"
+              exit 1
+            fi
+            version="${REF_NAME}-0-g${short}"
+            tags="$image:$REF_NAME"
+            if [[ "$REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              release=true
+              tags="$tags $image:latest"
+            fi
+          else
+            version="$(git describe --tags --long --always)-dev"
+            tags="$image:sha-$short"
+          fi
+          {
+            echo "image=$image"
+            echo "version=$version"
+            echo "tags=$tags"
+            echo "release=$release"
+          } >> "$GITHUB_OUTPUT"
+          echo "Building $version as: $tags (release: $release)"
 
-          echo "IMAGE_TAG1=$TAG1" >> $GITHUB_ENV
-          echo "IMAGE_TAG2=$TAG2" >> $GITHUB_ENV
+      - name: Log in to ghcr.io
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+        run: printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
 
-      - name: Build Docker image
+      - name: Build and push
+        env:
+          VERSION: ${{ steps.vars.outputs.version }}
+          TAGS: ${{ steps.vars.outputs.tags }}
         run: |
-          echo "Building Docker images: $IMAGE_TAG1 and $IMAGE_TAG2"
-          docker build --build-arg VERSION="${LATEST_TAG}-0-$(git rev-parse --short HEAD)" -t "$IMAGE_TAG1" -t "$IMAGE_TAG2" .
+          set -euo pipefail
+          args=()
+          for t in $TAGS; do args+=(-t "$t"); done
+          docker build --pull --build-arg VERSION="$VERSION" "${args[@]}" .
+          for t in $TAGS; do docker push "$t"; done
 
-      - name: Push Docker image to GitHub Packages
+      - name: Resolve pushed digest
+        id: digest
+        env:
+          TAGS: ${{ steps.vars.outputs.tags }}
         run: |
-          echo "Pushing Docker images: $IMAGE_TAG1 and $IMAGE_TAG2"
-          docker push "$IMAGE_TAG1"
-          docker push "$IMAGE_TAG2"
+          set -euo pipefail
+          digest=""
+          for t in $TAGS; do
+            d=$(docker buildx imagetools inspect "$t" --format '{{json .Manifest}}' | jq -r .digest)
+            [[ "$d" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::bad digest '$d' for $t"; exit 1; }
+            [[ -z "$digest" || "$digest" == "$d" ]] || { echo "::error::tags point at different digests"; exit 1; }
+            digest="$d"
+          done
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "Pushed digest: $digest" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+        with:
+          cosign-release: v3.1.4
+
+      - name: Sign image (keyless, GitHub OIDC)
+        env:
+          REF: ${{ steps.vars.outputs.image }}@${{ steps.digest.outputs.digest }}
+        run: cosign sign --yes "$REF"
+
+      - name: Verify signature the way the host will
+        env:
+          REF: ${{ steps.vars.outputs.image }}@${{ steps.digest.outputs.digest }}
+          WORKFLOW: ${{ github.server_url }}/${{ github.workflow_ref }}
+        run: |
+          cosign verify "$REF" \
+            --certificate-identity "$WORKFLOW" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            > /dev/null
+          echo "Signature verified for identity $WORKFLOW"
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ steps.vars.outputs.image }}
+          subject-digest: ${{ steps.digest.outputs.digest }}
+          push-to-registry: true
+
+  deploy:
+    needs: build
+    # Only ever from a tag ref. A workflow_dispatch from a branch never gets here.
+    if: >-
+      github.ref_type == 'tag' && (
+        (github.event_name == 'push' && needs.build.outputs.release == 'true') ||
+        (github.event_name == 'workflow_dispatch' && inputs.deploy_mode == 'deploy' && needs.build.outputs.release == 'true') ||
+        (github.event_name == 'workflow_dispatch' && inputs.deploy_mode == 'verify')
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Environment secrets are only released to runs whose ref matches the
+    # environment's deployment tag rule (v*); see deploy/README.md.
+    environment:
+      name: production
+      url: https://infosecstreams.com/
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    permissions: {}
+    steps:
+      - name: Deploy the signed digest over SSH (forced command)
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_SSH_KNOWN_HOSTS }}
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER || 'ec2-user' }}
+          DIGEST: ${{ needs.build.outputs.digest }}
+          MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_mode || 'deploy' }}
+        run: |
+          set -euo pipefail
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::bad digest '$DIGEST'"; exit 1; }
+          [[ "$MODE" == deploy || "$MODE" == verify ]] || { echo "::error::bad mode '$MODE'"; exit 1; }
+          [[ -n "$SSH_KEY" && -n "$KNOWN_HOSTS" && -n "$DEPLOY_HOST" ]] || {
+            echo "::error::production environment is missing DEPLOY_SSH_KEY, DEPLOY_SSH_KNOWN_HOSTS or DEPLOY_HOST"; exit 1; }
+          dir=$(mktemp -d)
+          trap 'rm -rf "$dir"' EXIT
+          printf '%s\n' "$SSH_KEY" > "$dir/key"
+          printf '%s\n' "$KNOWN_HOSTS" > "$dir/known_hosts"
+          chmod 600 "$dir/key"
+          # The key's authorized_keys entry forces deploy-streamstatus, which
+          # reads only "<mode> <digest>" from SSH_ORIGINAL_COMMAND.
+          ssh -i "$dir/key" \
+            -o IdentitiesOnly=yes -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$dir/known_hosts" \
+            -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
+            "$DEPLOY_USER@$DEPLOY_HOST" "$MODE $DIGEST"

@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Fake docker for run.sh: just enough of pull/tag/logs/inspect.
+set -euo pipefail
+echo "$*" >> "$FAKE/calls"
+img_id() {
+  local ref=$1
+  if [[ -f "$FAKE/tags/$ref" ]]; then cat "$FAKE/tags/$ref"; return; fi
+  case $ref in
+  *@sha256:*) echo "sha256:img-${ref: -6}" ;;
+  *:latest) echo "sha256:img-latest" ;;
+  *) return 1 ;;
+  esac
+}
+case $1 in
+pull) echo "${*: -1}" >> "$FAKE/pulled" ;;
+tag) echo "$2" > "$FAKE/tags/$3" ;;
+logs) cat "$FAKE/logs" ;;
+image) img_id "${*: -1}" || { echo "no such image" >&2; exit 1; } ;;
+inspect)
+  [[ "$4" == "$(cat "$FAKE/container")" ]] || { echo "no such container" >&2; exit 1; }
+  case $3 in
+  '{{.Image}}') img_id "$(cat "$FAKE/running_ref")" ;;
+  '{{.State.StartedAt}}') echo 2026-11-19T00:00:00Z ;;
+  '{{.State.Running}} {{.RestartCount}}') echo "true $(cat "$FAKE/restarts")" ;;
+  *) echo fake ;;
+  esac
+  ;;
+*) echo "fake docker: unsupported: $*" >&2; exit 1 ;;
+esac

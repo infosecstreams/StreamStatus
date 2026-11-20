@@ -1,0 +1,43 @@
+# The streamstatus service as it should look in the host's
+# /home/ec2-user/hosting/docker-compose.yml (docker-compose v1.29, file
+# format 3.x). Replace the existing streamstatus service with it and add the
+# top-level volume. See deploy/README.md.
+version: "3.7"
+
+services:
+  streamstatus:
+    # deploy-streamstatus pins this in /home/ec2-user/hosting/.env as
+    # STREAMSTATUS_IMAGE=ghcr.io/infosecstreams/streamstatus@sha256:<digest>
+    # (a signature-verified digest). :latest is only the fallback before the
+    # first automated deploy.
+    image: ${STREAMSTATUS_IMAGE:-ghcr.io/infosecstreams/streamstatus:latest}
+    restart: always
+    env_file: streamstatus.env
+    environment:
+      # SQLite DB (bot-live-data), on the named volume below.
+      SS_DB_PATH: /data/streamstatus.db
+    volumes:
+      - streamstatus-data:/data
+      # GitHub App private key lives in ./secrets (mode 700, key 400). The
+      # directory is mounted, not the file: a missing file mount would make
+      # Docker create a directory in its place. SS_GH_APP_ID,
+      # SS_GH_APP_INSTALLATION_ID and
+      # SS_GH_APP_PRIVATE_KEY_PATH=/run/secrets/streamstatus-github-app.pem
+      # go in streamstatus.env.
+      - ./secrets:/run/secrets:ro
+    # The image is FROM scratch and has no /tmp; SQLite and Go may want one.
+    tmpfs:
+      - /tmp
+    # nginx reaches the bot as streamstatus:8080 on the compose network.
+    # Publish to loopback only (for deploy health checks / debugging), never
+    # to the internet: Twitch and browsers come in through nginx.
+    ports:
+      - "127.0.0.1:8080:8080"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  streamstatus-data:
