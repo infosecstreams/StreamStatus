@@ -50,6 +50,9 @@ const (
 	// schedulePreliveLead is how long before a scheduled start a streamer
 	// is shown 🟡.
 	schedulePreliveLead = 15 * time.Minute
+	// schedulePreliveGrace is how long after a scheduled start a 🟡 from
+	// the schedule lasts if the streamer hasn't gone live.
+	schedulePreliveGrace = 15 * time.Minute
 	// schedulePreliveInterval is how often upcoming segments are checked.
 	schedulePreliveInterval = time.Minute
 	// scheduleCacheMaxAge is the Cache-Control max-age of both endpoints.
@@ -572,6 +575,7 @@ func (s *StreamersRepo) checkSchedulePrelive() {
 		}
 		log.Infof("schedule: %s starts %q at %s: marking pre-live", c.entry.login, c.seg.Title, c.seg.Start.Format(time.RFC3339))
 		s.applyPrelive(c.entry.login, game, ch.BroadcasterLanguage, now)
+		s.limitPreliveLogin(c.entry.login, now, c.seg.Start.Add(schedulePreliveGrace))
 	}
 }
 

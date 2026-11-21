@@ -52,6 +52,9 @@ type streamerState struct {
 	startedAt    time.Time
 	viewers      int
 	preliveSince time.Time
+	// preliveUntil, if set, ends the marker before preliveTTL: a scheduled
+	// stream that hasn't started by then isn't "getting ready" any more.
+	preliveUntil time.Time
 	// lastEvent is when an EventSub event for them was last handled.
 	lastEvent time.Time
 }
@@ -219,14 +222,19 @@ func (l *liveState) preliveUpdate(id, category, title, language string, now time
 	l.recordTitle(id, now, title, category)
 	st.status = statusPrelive
 	st.preliveSince = now.UTC()
+	st.preliveUntil = time.Time{}
 	st.category, st.title, st.language = category, title, strings.ToLower(language)
 	st.tags, st.startedAt, st.viewers = nil, time.Time{}, 0
 }
 
-// expirePrelive drops pre-live markers older than preliveTTL.
+// expirePrelive drops pre-live markers older than preliveTTL or past their
+// preliveUntil.
 func (l *liveState) expirePrelive(now time.Time) {
 	for _, st := range l.states {
-		if st.status == statusPrelive && now.Sub(st.preliveSince) >= preliveTTL {
+		if st.status != statusPrelive {
+			continue
+		}
+		if now.Sub(st.preliveSince) >= preliveTTL || (!st.preliveUntil.IsZero() && !now.Before(st.preliveUntil)) {
 			*st = streamerState{status: statusOffline, lastEvent: st.lastEvent}
 		}
 	}
@@ -550,6 +558,22 @@ func (s *StreamersRepo) livePreliveLogin(login, category, language string, since
 	}
 	s.live.preliveUpdate(id, category, "", language, since)
 	s.live.rebuild(timeNow())
+}
+
+// limitPreliveLogin ends the pre-live marker set at since for login at
+// until instead of after preliveTTL. A marker set at another time (e.g. by
+// channel.update) is left alone.
+func (s *StreamersRepo) limitPreliveLogin(login string, since, until time.Time) {
+	if s.live == nil {
+		return
+	}
+	id, ok := s.live.byLogin[strings.ToLower(login)]
+	if !ok {
+		return
+	}
+	if st := s.live.states[id]; st != nil && st.status == statusPrelive && st.preliveSince.Equal(since.UTC()) {
+		st.preliveUntil = until.UTC()
+	}
 }
 
 // reconcileLive feeds a reconciliation's Helix answer into live state.

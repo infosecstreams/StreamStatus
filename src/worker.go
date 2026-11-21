@@ -196,13 +196,19 @@ func (s *StreamersRepo) process(job statusJob) {
 		}
 		if !live {
 			// An offline streamer editing their title or category is about
-			// to go live: show them 🟡 if it's an infosec category.
-			s.livePrelive(job)
+			// to go live: show them 🟡 if it's an infosec category (active
+			// streamers only; applyPrelive checks).
 			if contains(VALID_GAMES, job.game) {
+				if !s.isActiveStreamer(job.userName) {
+					log.Infof("channel update for offline channel %s (category %q): not on the active list, not marking pre-live", job.userName, job.game)
+					return
+				}
 				log.Infof("channel update for offline channel %s (category %q): marking pre-live", job.userName, job.game)
+				s.livePrelive(job)
 				s.applyPrelive(job.userName, job.game, job.language, timeNow())
 			} else {
 				log.Infof("channel update for offline channel %s (category %q): clearing any pre-live marker", job.userName, job.game)
+				s.livePrelive(job)
 				s.clearPrelive(job.userName)
 			}
 			return

@@ -157,3 +157,95 @@ func TestExpiredPrelive(t *testing.T) {
 		t.Errorf("got %s, want Gaming,NoTS,Old", got)
 	}
 }
+
+// withLiveState gives a git fixture an in-memory status.json for users.
+func withLiveState(t *testing.T, s *StreamersRepo, now time.Time, users ...helix.User) {
+	t.Helper()
+	fu := &fakeUsers{}
+	fu.set(users...)
+	s.users = fu
+	s.live = newTestLive(t, "")
+	logins := make([]string, 0, len(users))
+	for _, u := range users {
+		logins = append(logins, u.Login)
+	}
+	s.resolveRoster(logins, now)
+}
+
+var userDormant = helix.User{ID: "9", Login: "dormant", DisplayName: "dormant"}
+
+// Ash_F0x on 2026-11-21: an inactive streamer was shown 🟡 in status.json
+// (and so on the site) although the markdown path refused them.
+func TestChannelUpdateNeverMarksInactiveStreamerPrelive(t *testing.T) {
+	freezeTime(t, preliveNow)
+	s, origin := newGitFixture(t, []string{offlineLine("alpha")},
+		[]string{"`dormant` | [<i class=\"fab fa-twitch\" style=\"color:#9146FF\"></i>](https://www.twitch.tv/dormant) &nbsp; |"}, "alpha,\n", "dormant,\n")
+	s.client = notLive()
+	withLiveState(t, s, preliveNow, userAlpha, userDormant)
+
+	s.process(statusJob{kind: jobChannelUpdate, userID: "9", userName: "dormant", game: "Science & Technology", language: "en"})
+	s.process(statusJob{kind: jobChannelUpdate, userID: "1", userName: "alpha", game: "Science & Technology", language: "en"})
+
+	_, got := decodeStatus(t, s.live)
+	if got["dormant"].Status == statusPrelive {
+		t.Errorf("inactive streamer shown pre-live: %+v", got["dormant"])
+	}
+	if got["alpha"].Status != statusPrelive {
+		t.Errorf("active streamer not pre-live: %+v", got["alpha"])
+	}
+	if strings.Contains(gitOutput(t, origin, "show", "main:index.md"), "dormant") {
+		t.Error("inactive streamer reached index.md")
+	}
+}
+
+func TestSchedulePreliveNeverMarksInactiveStreamer(t *testing.T) {
+	s, _ := newSchedulePreliveRepo(t, map[string]scheduledSegment{"dormant": soon(5*time.Minute, "Science & Technology")})
+	withLiveState(t, s, schedNow, userAlpha, userDormant)
+
+	s.process(statusJob{kind: jobFunc, fn: s.checkSchedulePrelive})
+	s.live.rebuild(schedNow)
+
+	if _, got := decodeStatus(t, s.live); got["dormant"].Status == statusPrelive {
+		t.Errorf("inactive streamer shown pre-live from their schedule: %+v", got["dormant"])
+	}
+}
+
+// A 🟡 from the schedule ends schedulePreliveGrace after the scheduled
+// start if they don't go live, not a full preliveTTL after it was set.
+func TestSchedulePreliveEndsAfterNoShow(t *testing.T) {
+	s, _ := newSchedulePreliveRepo(t, map[string]scheduledSegment{"alpha": soon(10*time.Minute, "Science & Technology")})
+	withLiveState(t, s, schedNow, userAlpha, userDormant)
+
+	s.process(statusJob{kind: jobFunc, fn: s.checkSchedulePrelive})
+	if _, got := decodeStatus(t, s.live); got["alpha"].Status != statusPrelive {
+		t.Fatalf("alpha not pre-live: %+v", got["alpha"])
+	}
+
+	deadline := schedNow.Add(10*time.Minute + schedulePreliveGrace)
+	s.live.expirePrelive(deadline.Add(-time.Second))
+	s.live.rebuild(deadline.Add(-time.Second))
+	if _, got := decodeStatus(t, s.live); got["alpha"].Status != statusPrelive {
+		t.Errorf("ended before the grace period: %+v", got["alpha"])
+	}
+	s.live.expirePrelive(deadline)
+	s.live.rebuild(deadline)
+	if _, got := decodeStatus(t, s.live); got["alpha"].Status == statusPrelive {
+		t.Errorf("still pre-live %s after a no-show: %+v", schedulePreliveGrace, got["alpha"])
+	}
+}
+
+// channel.update markers keep the full preliveTTL.
+func TestChannelUpdatePreliveKeepsFullTTL(t *testing.T) {
+	c := useClock(t, preliveNow)
+	s, _ := newGitFixture(t, []string{offlineLine("alpha")}, nil, "alpha,\n", "")
+	s.client = notLive()
+	withLiveState(t, s, c.now, userAlpha)
+	s.process(statusJob{kind: jobChannelUpdate, userID: "1", userName: "alpha", game: "Science & Technology", language: "en"})
+
+	at := preliveNow.Add(preliveTTL - time.Minute)
+	s.live.expirePrelive(at)
+	s.live.rebuild(at)
+	if _, got := decodeStatus(t, s.live); got["alpha"].Status != statusPrelive {
+		t.Errorf("channel.update marker ended early: %+v", got["alpha"])
+	}
+}

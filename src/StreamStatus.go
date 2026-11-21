@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -843,8 +844,13 @@ func helixError(rc helix.ResponseCommon) error {
 }
 
 // applyPrelive marks an active, offline streamer 🟡 "getting ready".
-// Callers must hold s.mutex.
+// Inactive streamers are never marked: they come back when they actually
+// go live. Callers must hold s.mutex.
 func (s *StreamersRepo) applyPrelive(streamer, game, language string, since time.Time) bool {
+	if !s.isActiveStreamer(streamer) {
+		log.Infof("%s is not on the active list; not marking pre-live", streamer)
+		return false
+	}
 	s.livePreliveLogin(streamer, game, language, since)
 	s.streamer = streamer
 	s.online = false
@@ -855,6 +861,33 @@ func (s *StreamersRepo) applyPrelive(streamer, game, language string, since time
 	s.tags = nil
 	defer func() { s.prelive = false }()
 	return s.commitAndPush()
+}
+
+// isActiveStreamer reports whether login is in streamers.csv as of the
+// last sync. If the CSV can't be read it answers false, so nobody is marked
+// pre-live on unknown data. With no CSV configured (tests that don't use
+// the roster) every streamer counts as active.
+func (s *StreamersRepo) isActiveStreamer(login string) bool {
+	if s.activeCsvPath == "" {
+		return true
+	}
+	names, err := csvNames(s.activeCsvPath)
+	if errors.Is(err, fs.ErrNotExist) {
+		// Not cloned yet: sync, then read again.
+		if err = s.getRepo(); err == nil {
+			names, err = csvNames(s.activeCsvPath)
+		}
+	}
+	if err != nil {
+		log.Warnf("reading %s: %s; treating %s as inactive", s.activeCsvPath, err, login)
+		return false
+	}
+	for _, n := range names {
+		if strings.EqualFold(n, login) {
+			return true
+		}
+	}
+	return false
 }
 
 // mayReactivate reports whether the prepared update could move an inactive
