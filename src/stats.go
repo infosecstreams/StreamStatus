@@ -248,9 +248,10 @@ func (st *store) loadStatsData(now time.Time) (*statsData, error) {
 	}
 
 	// All-time peak, in infosec categories only.
-	ph := make([]string, len(VALID_GAMES))
-	args := make([]any, len(VALID_GAMES))
-	for i, g := range VALID_GAMES {
+	cats := append([]string{"", strings.ToLower(noCategory)}, VALID_GAMES...)
+	ph := make([]string, len(cats))
+	args := make([]any, len(cats))
+	for i, g := range cats {
 		ph[i], args[i] = "?", strings.ToLower(g)
 	}
 	rows, err = st.db.Query(`SELECT user_id, MAX(viewers) FROM viewer_samples WHERE lower(category) IN (`+strings.Join(ph, ",")+`) GROUP BY user_id`, args...)
@@ -655,16 +656,20 @@ func computeStreamerStats(id string, d *statsData, now time.Time) streamerStats 
 			if gEnd.IsZero() {
 				gEnd = end
 			}
-			if len(cats) == 0 || cats[len(cats)-1] != g.category {
-				cats = append(cats, g.category)
+			category := g.category
+			if strings.TrimSpace(category) == "" {
+				category = noCategory
+			}
+			if len(cats) == 0 || cats[len(cats)-1] != category {
+				cats = append(cats, category)
 			}
 			o30 := overlap(g.start, gEnd, w30, now)
 			all30 += o30
-			key := strings.ToLower(g.category)
+			key := strings.ToLower(category)
 			if o30 > 0 {
 				catSecs[key] += o30
 				if _, ok := catName[key]; !ok {
-					catName[key] = g.category
+					catName[key] = category
 				}
 			}
 			if !countsAsInfosec(g.category) || !gEnd.After(g.start) {

@@ -29,10 +29,23 @@ import (
 // backfillCategory is the category of imported time.
 const backfillCategory = "Unknown (backfill)"
 
+// noCategory is how trackers and Twitch's directory name a stream with no
+// category set (Helix reports it as an empty game name, game id 0).
+const noCategory = "Unlisted on Twitch"
+
+// isInfosecCategory reports whether a stream in category counts as an
+// infosec stream: one of VALID_GAMES, or no category at all. A streamer who
+// leaves the category unset is judged by the roster, not the category
+// (owner's decision, 2026-11-21: BrakeSec's podcast streams have none).
+func isInfosecCategory(category string) bool {
+	c := strings.TrimSpace(category)
+	return c == "" || strings.EqualFold(c, noCategory) || contains(VALID_GAMES, c)
+}
+
 // countsAsInfosec reports whether time in category counts towards hours,
 // streams and viewer figures.
 func countsAsInfosec(category string) bool {
-	return strings.EqualFold(category, backfillCategory) || contains(VALID_GAMES, category)
+	return strings.EqualFold(category, backfillCategory) || isInfosecCategory(category)
 }
 
 // defaultBackfillPath is where bot-schedule caches tracker history: next

@@ -495,7 +495,7 @@ func (s *StreamersRepo) checkSchedulePrelive() {
 			if g.Start.Before(now) || g.Start.Sub(now) > schedulePreliveLead {
 				continue
 			}
-			if g.Category != "" && !contains(VALID_GAMES, g.Category) {
+			if !isInfosecCategory(g.Category) {
 				continue
 			}
 			cands = append(cands, candidate{g, st.roster[id], key})
@@ -567,7 +567,7 @@ func (s *StreamersRepo) checkSchedulePrelive() {
 		}
 		ch := channels[c.entry.id]
 		game := c.seg.Category
-		if game == "" && contains(VALID_GAMES, ch.GameName) {
+		if game == "" && ch.GameName != "" && isInfosecCategory(ch.GameName) {
 			game = ch.GameName
 		}
 		if game == "" {

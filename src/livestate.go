@@ -178,7 +178,7 @@ func (l *liveState) online(id string, stream helix.Stream, now time.Time) {
 	st.viewers = stream.ViewerCount
 	st.preliveSince = time.Time{}
 	st.status = statusOffline
-	if contains(VALID_GAMES, stream.GameName) {
+	if isInfosecCategory(stream.GameName) {
 		st.status = statusOnline
 	}
 	l.recordSample(id, now, stream.ViewerCount, stream.GameName)
@@ -216,7 +216,7 @@ func (l *liveState) preliveUpdate(id, category, title, language string, now time
 		// Helix just stopped listing them; the offline event decides.
 		return
 	}
-	if !contains(VALID_GAMES, category) {
+	if !isInfosecCategory(category) {
 		*st = streamerState{status: statusOffline, lastEvent: st.lastEvent}
 		return
 	}

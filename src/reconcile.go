@@ -157,7 +157,7 @@ func diffLiveState(active, inactive []string, onlineNow map[string]bool, live ma
 	for _, name := range active {
 		key := strings.ToLower(name)
 		stream, isLive := live[key]
-		want := isLive && contains(VALID_GAMES, stream.GameName)
+		want := isLive && isInfosecCategory(stream.GameName)
 		if want == onlineNow[key] {
 			continue
 		}
@@ -169,7 +169,7 @@ func diffLiveState(active, inactive []string, onlineNow map[string]bool, live ma
 	}
 	for _, name := range inactive {
 		stream, isLive := live[strings.ToLower(name)]
-		if !isLive || !contains(VALID_GAMES, stream.GameName) {
+		if !isLive || !isInfosecCategory(stream.GameName) {
 			continue
 		}
 		changes = append(changes, statusChange{name: name, online: true, stream: stream})
@@ -283,7 +283,7 @@ func preliveStreamers(indexMd string) map[string]preliveRow {
 func expiredPrelive(prelive map[string]preliveRow, live map[string]helix.Stream, now time.Time, ttl time.Duration) []string {
 	var out []string
 	for key, row := range prelive {
-		if st, ok := live[key]; ok && contains(VALID_GAMES, st.GameName) {
+		if st, ok := live[key]; ok && isInfosecCategory(st.GameName) {
 			continue
 		}
 		if row.since.IsZero() || now.Sub(row.since) >= ttl {

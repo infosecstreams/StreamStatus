@@ -183,7 +183,7 @@ func (s *StreamersRepo) process(job statusJob) {
 			name = stream.UserLogin
 		}
 		// Streamers outside the infosec categories are shown as offline.
-		s.applyStatus(name, contains(VALID_GAMES, stream.GameName), stream.GameName, stream.Language, stream.Tags)
+		s.applyStatus(name, isInfosecCategory(stream.GameName), stream.GameName, stream.Language, stream.Tags)
 
 	case jobChannelUpdate:
 		log.Printf("processing channel update event for: %s (%s)", job.userName, job.userID)
@@ -198,7 +198,7 @@ func (s *StreamersRepo) process(job statusJob) {
 			// An offline streamer editing their title or category is about
 			// to go live: show them 🟡 if it's an infosec category (active
 			// streamers only; applyPrelive checks).
-			if contains(VALID_GAMES, job.game) {
+			if isInfosecCategory(job.game) {
 				if !s.isActiveStreamer(job.userName) {
 					log.Infof("channel update for offline channel %s (category %q): not on the active list, not marking pre-live", job.userName, job.game)
 					return
@@ -220,7 +220,7 @@ func (s *StreamersRepo) process(job statusJob) {
 			updated.Title = job.title
 		}
 		s.liveOnline(job.userID, updated)
-		s.applyStatus(job.userName, contains(VALID_GAMES, job.game), job.game, job.language, stream.Tags)
+		s.applyStatus(job.userName, isInfosecCategory(job.game), job.game, job.language, stream.Tags)
 
 	case jobReconcile:
 		s.reconcile()
