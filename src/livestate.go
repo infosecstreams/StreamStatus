@@ -52,8 +52,9 @@ type streamerState struct {
 	startedAt    time.Time
 	viewers      int
 	preliveSince time.Time
-	// preliveUntil, if set, ends the marker before preliveTTL: a scheduled
-	// stream that hasn't started by then isn't "getting ready" any more.
+	// preliveUntil, if set, ends the marker instead of preliveTTL: a
+	// scheduled stream that hasn't started by then isn't "getting ready"
+	// any more.
 	preliveUntil time.Time
 	// lastEvent is when an EventSub event for them was last handled.
 	lastEvent time.Time
@@ -227,14 +228,18 @@ func (l *liveState) preliveUpdate(id, category, title, language string, now time
 	st.tags, st.startedAt, st.viewers = nil, time.Time{}, 0
 }
 
-// expirePrelive drops pre-live markers older than preliveTTL or past their
-// preliveUntil.
+// expirePrelive drops pre-live markers past their preliveUntil, or, without
+// one, older than preliveTTL.
 func (l *liveState) expirePrelive(now time.Time) {
 	for _, st := range l.states {
 		if st.status != statusPrelive {
 			continue
 		}
-		if now.Sub(st.preliveSince) >= preliveTTL || (!st.preliveUntil.IsZero() && !now.Before(st.preliveUntil)) {
+		expired := now.Sub(st.preliveSince) >= preliveTTL
+		if !st.preliveUntil.IsZero() {
+			expired = !now.Before(st.preliveUntil)
+		}
+		if expired {
 			*st = streamerState{status: statusOffline, lastEvent: st.lastEvent}
 		}
 	}

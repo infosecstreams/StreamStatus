@@ -23,9 +23,11 @@ const defaultReconcileInterval = 5 * time.Minute
 // just started), so correcting sooner would undo a fresh event and flap.
 const reconcileGrace = 5 * time.Minute
 
-// preliveTTL is how long a 🟡 pre-live marker lasts if the streamer
-// doesn't go live.
-const preliveTTL = 60 * time.Minute
+// preliveTTL is how long a 🟡 pre-live marker from channel.update lasts if
+// the streamer doesn't go live. It matches the site, which shows "getting
+// ready" for at most 20 minutes. Schedule markers end at their own
+// deadline instead (see schedulePreliveGrace).
+const preliveTTL = 20 * time.Minute
 
 // Pre-live rows carry their start time in the Twitch link's hover text:
 // "Getting ready: <category> (since 2026-11-19T14:05Z)".

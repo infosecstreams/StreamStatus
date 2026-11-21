@@ -188,14 +188,14 @@ func TestLiveStateFollowsEvents(t *testing.T) {
 		t.Fatalf("after offline: %+v", got["alpha"])
 	}
 
-	// Pre-live, then expiry after an hour.
+	// Pre-live, then expiry after preliveTTL.
 	s.process(statusJob{kind: jobChannelUpdate, userID: "2", userName: "beta", game: "Science & Technology", language: "de", title: "Soon"})
 	_, got = decodeStatus(t, s.live)
 	b := got["beta"]
 	if b.Status != statusPrelive || b.PreliveSince != rfc3339(c.now) || b.Category != "Science & Technology" || b.Title != "Soon" || b.StartedAt != "" {
 		t.Fatalf("pre-live: %+v", b)
 	}
-	c.advance(59 * time.Minute)
+	c.advance(preliveTTL - time.Minute)
 	s.process(statusJob{kind: jobRefreshLive})
 	if _, got = decodeStatus(t, s.live); got["beta"].Status != statusPrelive {
 		t.Fatalf("pre-live expired early: %+v", got["beta"])
@@ -203,7 +203,7 @@ func TestLiveStateFollowsEvents(t *testing.T) {
 	c.advance(2 * time.Minute)
 	s.process(statusJob{kind: jobRefreshLive})
 	if _, got = decodeStatus(t, s.live); got["beta"].Status != statusOffline || got["beta"].Category != "" {
-		t.Fatalf("pre-live should expire after 60 min: %+v", got["beta"])
+		t.Fatalf("pre-live should expire after %s: %+v", preliveTTL, got["beta"])
 	}
 }
 

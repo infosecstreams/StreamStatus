@@ -466,7 +466,7 @@ func (s *StreamersRepo) nextStreamAt(id string) (time.Time, bool) {
 // segment (in an infosec category, or with none) starts within
 // schedulePreliveLead, through the same applyPrelive path as channel.update:
 // it never overrides 🟢, never reactivates inactive streamers, and expires
-// after preliveTTL in reconcile. Runs on the worker with s.mutex held.
+// schedulePreliveGrace after the scheduled start if they don't go live. Runs on the worker with s.mutex held.
 func (s *StreamersRepo) checkSchedulePrelive() {
 	st := s.schedule
 	if st == nil {
